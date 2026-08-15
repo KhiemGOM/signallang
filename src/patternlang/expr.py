@@ -28,6 +28,13 @@ _FUNCTIONS = {
     "terop": _terop,
 }
 _CONSTANTS = {"pi": math.pi, "e": math.e, "true": 1.0, "false": 0.0}
+# Every time-like quantity in this language is stored internally as a plain
+# float in seconds - a duration literal (10s, 3m, 500ms) normalizes to
+# seconds at parse time; the postfix .s/.m/.ms operator is the reverse view
+# onto any expression already in seconds. "ms" must be checked before "s"/"m"
+# (longest match first) so ".ms" isn't swallowed as ".m" leaving a stray "s".
+_TIME_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0}
+_TIME_UNIT_SUFFIXES = ("ms", "s", "m")
 _COMPARISONS = {
     "<=": lambda a, b: a <= b,
     ">=": lambda a, b: a >= b,
@@ -164,6 +171,34 @@ class _Parser:
             return self._unary()
         return self._atom()
 
+    def _match_time_unit(self, start: int) -> str | None:
+        """If `start` (no leading whitespace skip - callers control that)
+        begins with a time-unit suffix at a word boundary, return it."""
+        for suffix in _TIME_UNIT_SUFFIXES:
+            end = start + len(suffix)
+            if self.text[start:end] != suffix:
+                continue
+            if end < len(self.text) and (self.text[end].isalnum() or self.text[end] == "_"):
+                continue
+            return suffix
+        return None
+
+    def _postfix(self, value: float) -> float:
+        """Postfix .s/.m/.ms - a unit *view* onto a value already stored in
+        seconds (X.s == X, X.m == X/60, X.ms == X*1000). Applies uniformly to
+        timers (t.s, _t.ms, a `var`-bound timer()'s .s) and to any other
+        expression, since nothing about it is really "attribute access" -
+        it's three fixed, always-available postfix operators."""
+        save = self.pos
+        self._skip_ws()
+        if self.pos < len(self.text) and self.text[self.pos] == ".":
+            unit = self._match_time_unit(self.pos + 1)
+            if unit is not None:
+                self.pos += 1 + len(unit)
+                return value / _TIME_UNITS[unit]
+        self.pos = save
+        return value
+
     def _atom(self) -> float:
         self._skip_ws()
         if self.pos >= len(self.text):
@@ -175,12 +210,19 @@ class _Parser:
             if self._peek() != ")":
                 raise ExprError("expected ')'")
             self.pos += 1
-            return value
+            return self._postfix(value)
         if c.isdigit() or c == ".":
             start = self.pos
             while self.pos < len(self.text) and (self.text[self.pos].isdigit() or self.text[self.pos] == "."):
                 self.pos += 1
-            return float(self.text[start : self.pos])
+            value = float(self.text[start : self.pos])
+            # a duration literal (10s, 3m, 500ms) - no dot, glued straight
+            # onto the number - normalizes to seconds immediately.
+            unit = self._match_time_unit(self.pos)
+            if unit is not None:
+                self.pos += len(unit)
+                value *= _TIME_UNITS[unit]
+            return self._postfix(value)
         if c.isalpha() or c == "_":
             start = self.pos
             while self.pos < len(self.text) and (self.text[self.pos].isalnum() or self.text[self.pos] == "_"):
@@ -199,11 +241,11 @@ class _Parser:
                 self.pos += 1
                 if name not in _FUNCTIONS:
                     raise ExprError(f"unknown function '{name}'")
-                return float(_FUNCTIONS[name](*args))
+                return self._postfix(float(_FUNCTIONS[name](*args)))
             if name in self.variables:
-                return float(self.variables[name])
+                return self._postfix(float(self.variables[name]))
             if name in _CONSTANTS:
-                return _CONSTANTS[name]
+                return self._postfix(_CONSTANTS[name])
             raise ExprError(f"unknown identifier '{name}'")
         raise ExprError(f"unexpected character '{c}' at position {self.pos}")
 

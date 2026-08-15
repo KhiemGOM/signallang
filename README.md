@@ -13,21 +13,43 @@ over time."
 
 ## What's here
 
-This repo currently ships the **expression layer** — arithmetic,
-comparisons, `and`/`or`/`not`, a small function whitelist, and `terop`
-(a named ternary, not `? :`). A statement-level layer on top of it
-(`var`, `if {} else {}`, `repeat`/`for`, `live` blocks with an automatic
-per-binding timer, `send hz/dur`) is designed but not yet built — see
-[Roadmap](#roadmap).
+This repo ships the full language: the **expression layer** (arithmetic,
+comparisons, `and`/`or`/`not`, a function whitelist, `terop`, and a
+postfix `.s`/`.m`/`.ms` unit-view operator) and the **statement layer** on
+top of it — `var`, `if {} else if {} else {}`, `repeat`/`repeat N`/`for i
+in A..B`, `live { }` blocks with an automatic per-binding `_t`,
+`timer()`/`latching_timer()`/`.reset()`, `send hz/dur`, string literals,
+positional array fill, and the `default` placeholder.
 
 ```python
-from patternlang import evaluate
+from patternlang import evaluate, compile_script
 
 evaluate("sin(t)", {"t": 1.57})
 # 0.9999996829318346
 
 evaluate("terop(t < 4.5 and battery > 0, 1, 0)", {"t": 2.0, "battery": 80.0})
 # 1.0
+
+compiled = compile_script("temperature = linear(20, 30, 10s);\nsend hz 2 dur inf;")
+run = compiled.new_run()
+run.step()  # StepResult(value={'temperature': 20.0}, hz=2.0)
+run.step()  # StepResult(value={'temperature': 20.5}, hz=2.0)
+```
+
+A script compiles to a small, flat instruction tape (mostly `Send`, plus
+`SetVar`/`SetField`/`Jump`/`JumpIfFalse`/`CreateTimer`/`ResetTimer`) and
+runs as a stepped VM: `ScriptRun.step()` executes instructions until it
+hits the next `Send` tick and returns immediately — no thread, no clock,
+no `sleep()` anywhere in `compiler.py`/`vm.py`. Real-time pacing between
+`step()` calls is the caller's job; `run_realtime()` is a small opt-in
+convenience driver (the only place in the package that imports `time`) for
+anyone using patternlang outside a framework that already owns its own
+timer loop (like ROS's `rclpy.Timer` will in a future adapter).
+
+```python
+from patternlang import run_realtime
+
+run_realtime(compiled, on_send=lambda msg: print(msg))  # blocks, runs in real time
 ```
 
 ## Grammar
@@ -60,9 +82,8 @@ pip install -e ".[test]" && pytest
 
 ## Roadmap
 
-The full design — `msg`, static vs. `live` field assignment, `var`
-locals, real `if {} else {}` blocks, `repeat`/`for i in A..B`, `timer()`
-/ `latching_timer()` / the automatic per-`live`-block `_t`, `send hz X
-dur Y` (including tick-count durations), positional array fill against a
-schema, and the `default` placeholder — is written up in full but not
-yet implemented on top of this expression layer. That's the next phase.
+What's left is wiring this up to a real message system — a ROS2 adapter
+(`SchemaProvider` backed by real message reflection, ROS type-coercion,
+and a real `rclpy.Timer` driving `step()` in place of `run_realtime()`)
+that the `robohome_ws` dashboard's fake-publisher feature would depend on.
+Nothing in this package itself is ROS-specific, by design.
