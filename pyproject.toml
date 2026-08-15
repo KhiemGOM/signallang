@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=60"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "patternlang"
+version = "0.1.0"
+description = "A small, safe scripting language for describing time-varying synthetic structured data - no eval/exec, no user-defined functions."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+authors = [{ name = "khiemgom" }]
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
