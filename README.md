@@ -113,7 +113,7 @@ Loosest to tightest binding: `or` → `and` → `not` → comparison
 |---|---|
 | Numbers | `20`, `0.5`, `-3.2` |
 | Constants | `true`, `false`, `pi`, `e` |
-| Variables | `t`, `i`, `_t`, or any name declared with `var` |
+| Variables | `t`, `_t`, a `for` loop's own variable, or any name declared with `var` |
 | Functions | `sin cos abs sqrt floor ceil min max random noise` (see also [Signal-shape builtins](#signal-shape-builtins)) |
 | `terop(cond, then, else)` | conditional expression; both branches are evaluated |
 | Duration literals | `10s`, `3m`, `500ms`, `10t` (ticks); normalized to seconds at parse time |
@@ -121,9 +121,10 @@ Loosest to tightest binding: `or` → `and` → `not` → comparison
 | `.scale(k)` | postfix result transform — multiplies the value by `k` |
 | `.add(k)` / `.bias(k)` | postfix result transform — adds `k` to the value; two names for the same operation |
 
-Only names declared with `var`, plus the language-defined names `t`,
-`_t`, and (inside a `for` loop) `i`, are in scope. There is no ambient
-global namespace.
+Only names declared with `var`, a `for` loop's own variable (bound to
+whatever identifier follows `for` — `i` is convention, not a reserved
+name; `for row in 0..7` works identically), and the language-defined
+names `t`/`_t`, are in scope. There is no ambient global namespace.
 
 `.s`, `.m`, `.ms`, `.scale(k)`, and `.add(k)`/`.bias(k)` chain in any
 order and any count: `_t.s.scale(2).add(1)`. None accept a string
@@ -231,6 +232,7 @@ if battery < 20 {
 repeat 3 { send hz 1 dur 1t; }        # fixed count
 repeat { send hz 1 dur 1t; }          # forever
 for i in 0..7 { data = i * 30; send hz 1 dur 1t; }   # bounded range, i in scope
+for row in 0..7 { data = row; send hz 1 dur 1t; }    # any identifier - i is convention, not special
 for i in 0..inf { data = i; send hz 1 dur 1t; }      # unbounded — no eager unrolling
 ```
 
@@ -300,11 +302,15 @@ instead: `data = live 1 + sin(t);`.
 
 **`t` and `_t`**
 
-`t` is the VM's tick counter, in scope everywhere. `_t` is a
-`latching_timer()` scoped to a `live` binding: unset until first read,
-and reset to zero each time the binding's assignment statement is
-(re-)executed. A `live` expression inside a `repeat` body therefore
-restarts from zero on every iteration.
+`t` is a single value for the whole script, starting at 0 and never
+reset, in scope everywhere. It is not a count of ticks — it accumulates
+elapsed time in seconds, advancing by `1/hz` each time any `Send`
+instruction fires a tick, so its rate of advance follows whatever `hz`
+was active at that tick. `_t` is a `latching_timer()` scoped to a `live`
+binding: unset until first read, and reset to zero each time the
+binding's assignment statement is (re-)executed. A `live` expression
+inside a `repeat` body therefore restarts from zero on every iteration,
+unlike `t`, which never restarts.
 
 ### Signal-shape builtins
 
@@ -398,9 +404,9 @@ mobile-base test rig.
 - No `eval`, no `exec`, no attribute access, no imports, no
   user-defined functions. Every callable is drawn from a fixed set of
   functions defined by the language.
-- The only names in scope are `t`, `i`, `_t`, names declared with `var`,
-  and fields of the message being built. No name outside the value
-  currently being computed is accessible.
+- The only names in scope are `t`, `_t`, a `for` loop's own variable,
+  names declared with `var`, and fields of the message being built. No
+  name outside the value currently being computed is accessible.
 - `hz` is clamped to a 50Hz ceiling at compile time. `hz <= 0` is a
   compile error, not a runtime exception.
 - Malformed scripts (invalid field names, incorrect array shape,
