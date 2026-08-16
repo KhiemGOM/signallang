@@ -126,6 +126,15 @@ _CONSTANTS = {"pi": math.pi, "e": math.e, "true": 1.0, "false": 0.0}
 # (longest match first) so ".ms" isn't swallowed as ".m" leaving a stray "s".
 _TIME_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0}
 _TIME_UNIT_SUFFIXES = ("ms", "s", "m")
+# Postfix result transforms - .scale(k) multiplies, .add(k)/.bias(k) add
+# (two names for the same operation: "add" for plain arithmetic, "bias"
+# for the DC-offset framing of a signal). Unlike .s/.m/.ms these take a
+# parenthesized argument, itself an arbitrary expression.
+_VALUE_METHODS = {
+    "scale": lambda v, arg: v * arg,
+    "add": lambda v, arg: v + arg,
+    "bias": lambda v, arg: v + arg,
+}
 _COMPARISONS = {
     "<=": lambda a, b: a <= b,
     ">=": lambda a, b: a >= b,
@@ -313,26 +322,90 @@ class _Parser:
             return suffix
         return None
 
-    def _postfix(self, value: Value) -> Value:
-        """Postfix .s/.m/.ms - a unit *view* onto a value already stored in
-        seconds (X.s == X, X.m == X/60, X.ms == X*1000). Applies uniformly to
-        timers (t.s, _t.ms, a `var`-bound timer()'s .s) and to any other
-        numeric expression, since nothing about it is really "attribute
-        access" - it's three fixed, always-available postfix operators. A
-        string has no time-unit view; matching the suffix but then rejecting
-        it (rather than silently leaving it unconsumed) gives a clear error
-        instead of a confusing "unexpected trailing input"."""
+    def _maybe_apply_shift(self, name: str, args: list) -> list:
+        """`.shift(offset)` - recognized directly after a function call's
+        closing ')', before the call is made. Rewrites the call's first
+        argument by subtracting offset; the (possibly shifted) call then
+        proceeds exactly as any other call would - static or live is
+        decided independently, by whatever wraps this expression (`!` or
+        `live`), never by shift itself. Unlike the operators in
+        _postfix(), this can't be a plain postfix on a result: shift has
+        to change an argument before the call happens, and by the time
+        _postfix() runs the call has already returned a value with no
+        arguments left to rewrite."""
         save = self.pos
         self._skip_ws()
-        if self.pos < len(self.text) and self.text[self.pos] == ".":
-            unit = self._match_time_unit(self.pos + 1)
+        if self.text[self.pos : self.pos + 1] != ".":
+            self.pos = save
+            return args
+        after_dot = self.pos + 1
+        if self.text[after_dot : after_dot + 5] != "shift":
+            self.pos = save
+            return args
+        after_name = after_dot + 5
+        if after_name >= len(self.text) or self.text[after_name] != "(":
+            self.pos = save
+            return args
+        if not args:
+            raise ExprError(f"'.shift(...)' requires '{name}' to take at least one argument")
+        if isinstance(args[0], str):
+            raise ExprError(f"'.shift(...)' is not supported - '{name}''s first argument is a string")
+        self.pos = after_name + 1
+        offset = self._or()
+        if isinstance(offset, str):
+            raise ExprError("'.shift(...)' requires a number argument, got a string")
+        if self._peek() != ")":
+            raise ExprError("expected ')'")
+        self.pos += 1
+        return [args[0] - offset, *args[1:]]
+
+    def _postfix(self, value: Value) -> Value:
+        """Chainable postfix operators, applied left to right:
+        - .s/.m/.ms - a unit *view* onto a value already stored in seconds
+          (X.s == X, X.m == X/60, X.ms == X*1000). Takes no argument.
+        - .scale(expr) - multiplies by expr.
+        - .add(expr) / .bias(expr) - adds expr (two names, one operation:
+          "add" for plain arithmetic, "bias" for a signal's DC offset).
+        Applies uniformly to timers (t.s, _t.ms), function results
+        (square!(0, 1, 2s).scale(5)), and any other numeric expression -
+        nothing here is really "attribute access", these are fixed,
+        always-available postfix operators, chainable in any combination
+        (`x.s.scale(2).add(1)`). None of them accept a string operand;
+        matching the syntax but then rejecting the type (rather than
+        silently leaving it unconsumed) gives a clear error instead of a
+        confusing "unexpected trailing input"."""
+        while True:
+            save = self.pos
+            self._skip_ws()
+            if self.pos >= len(self.text) or self.text[self.pos] != ".":
+                self.pos = save
+                return value
+            after_dot = self.pos + 1
+            unit = self._match_time_unit(after_dot)
             if unit is not None:
                 if isinstance(value, str):
                     raise ExprError(f"'.{unit}' is not supported for strings")
-                self.pos += 1 + len(unit)
-                return value / _TIME_UNITS[unit]
-        self.pos = save
-        return value
+                self.pos = after_dot + len(unit)
+                value = value / _TIME_UNITS[unit]
+                continue
+            name_end = after_dot
+            while name_end < len(self.text) and (self.text[name_end].isalnum() or self.text[name_end] == "_"):
+                name_end += 1
+            method_name = self.text[after_dot:name_end]
+            if method_name in _VALUE_METHODS and name_end < len(self.text) and self.text[name_end] == "(":
+                if isinstance(value, str):
+                    raise ExprError(f"'.{method_name}(...)' is not supported for strings")
+                self.pos = name_end + 1
+                arg = self._or()
+                if isinstance(arg, str):
+                    raise ExprError(f"'.{method_name}(...)' requires a number argument, got a string")
+                if self._peek() != ")":
+                    raise ExprError("expected ')'")
+                self.pos += 1
+                value = _VALUE_METHODS[method_name](value, arg)
+                continue
+            self.pos = save
+            return value
 
     def _parse_string_literal(self) -> str:
         """A quoted string atom - no escape sequences (a stated design
@@ -393,6 +466,7 @@ class _Parser:
                 self.pos += 1
                 if name not in _FUNCTIONS:
                     raise ExprError(f"unknown function '{name}'")
+                args = self._maybe_apply_shift(name, args)
                 try:
                     result = _FUNCTIONS[name](*args)
                 except TypeError as exc:

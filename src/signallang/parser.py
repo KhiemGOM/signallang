@@ -377,7 +377,7 @@ class Parser:
             return False
         return end >= len(self.text) or not (self.text[end].isalnum() or self.text[end] == "_")
 
-    def _scan_send_leading_value_span(self) -> ExprSpan:
+    def _scan_send_leading_value_span(self, allow_empty: bool = False) -> ExprSpan:
         """Like _scan_expr_span(";"), but also stops right before a
         subsequent `hz`/`dur` modifier keyword - needed for the
         value-first `send VALUE hz H dur D;` form, where a plain
@@ -417,7 +417,7 @@ class Parser:
         if i >= len(text):
             raise ScriptError("unexpected end of input while scanning a send value", start)
         value_text = text[start:i].strip()
-        if not value_text:
+        if not value_text and not allow_empty:
             raise ScriptError("expected a value", start)
         self.pos = i
         return ExprSpan(value_text)
@@ -441,21 +441,26 @@ class Parser:
             return self._parse_array_lit()
         if self._looking_at_word("live"):
             return self._parse_live_block(stop_chars, stop_at_send_modifiers)
-        bang_call = self._try_parse_bang_call()
+        bang_call = self._try_parse_bang_call(stop_chars, stop_at_send_modifiers)
         if bang_call is not None:
             return bang_call
         return self._scan_value_span(stop_chars, stop_at_send_modifiers)
 
-    def _scan_value_span(self, stop_chars: str, stop_at_send_modifiers: bool) -> ExprSpan:
-        """The plain-expression fallback shared by _parse_value's own tail
-        and live's one-line shorthand below - scans to whichever
-        terminator applies in this context (a stop char, or the sendvalue
-        scanner that also stops before a trailing hz/dur keyword)."""
+    def _scan_value_span(
+        self, stop_chars: str, stop_at_send_modifiers: bool, allow_empty: bool = False
+    ) -> ExprSpan:
+        """The plain-expression fallback shared by _parse_value's own tail,
+        live's one-line shorthand, and the bang-call's own trailing-postfix
+        capture below - scans to whichever terminator applies in this
+        context (a stop char, or the sendvalue scanner that also stops
+        before a trailing hz/dur keyword). allow_empty is for that last
+        case: a bang-call almost never has anything trailing after it, and
+        that's fine - only a plain value actually requires content."""
         if stop_at_send_modifiers:
-            return self._scan_send_leading_value_span()
+            return self._scan_send_leading_value_span(allow_empty)
         span_end = span.scan_span(self.text, self.pos, stop_chars)
         text = self.text[self.pos : span_end].strip()
-        if not text:
+        if not text and not allow_empty:
             raise ScriptError("expected a value", self.pos)
         self.pos = span_end
         return ExprSpan(text)
@@ -520,22 +525,29 @@ class Parser:
             )
         return Reassign(name=name, value=value)
 
-    def _try_parse_bang_call(self):
+    def _try_parse_bang_call(self, stop_chars: str, stop_at_send_modifiers: bool):
         """`name!(args)` - live-call sugar, recognized only as the WHOLE
         value (not nested inside a larger expression - `data = 1 +
         sin!(t);` isn't supported, matching how the old linear(...) sugar
         was also whole-RHS-only). Desugars to `live { return name(args);
         }` - or, for the fixed set of TIME_SHAPED_FUNCTIONS (linear/
-        square/triangle/sawtooth/damped_wave), `live { return name(_t,
-        args); }`, injecting the elapsed-time argument those specific
-        builtins expect first so the call site keeps the ergonomic shape
-        it would otherwise lose (`linear!(20, 30, 10s)`, not `linear!(_t,
-        20, 30, 10s)`). name isn't validated here - an unknown function
-        surfaces the same "unknown function" error at eval time as any
-        other bad call would, structural parsing doesn't need to know the
-        exact whitelist. Backtracks fully on any mismatch (no identifier,
-        no '!', '!' not followed directly by '(') so the caller can fall
-        through to a plain value."""
+        square/triangle/sawtooth/damped_wave/sinusoidal_wave), `live {
+        return name(_t, args); }`, injecting the elapsed-time argument
+        those specific builtins expect first so the call site keeps the
+        ergonomic shape it would otherwise lose (`linear!(20, 30, 10s)`,
+        not `linear!(_t, 20, 30, 10s)`). name isn't validated here - an
+        unknown function surfaces the same "unknown function" error at
+        eval time as any other bad call would, structural parsing doesn't
+        need to know the exact whitelist. Backtracks fully on any
+        mismatch (no identifier, no '!', '!' not followed directly by
+        '(') so the caller can fall through to a plain value.
+
+        Anything after the call's own closing ')' - `.shift(...)`,
+        `.scale(...)`, `.add(...)`/`.bias(...)`, `.s`/`.m`/`.ms`, any
+        combination - is expr.py syntax, not parser syntax, so it's just
+        carried through as raw trailing text rather than re-implemented
+        here; expr.py evaluates it against whatever this call produces
+        exactly as it would for a plain expression."""
         save = self.pos
         self._skip_ws()
         start = self.pos
@@ -561,7 +573,8 @@ class Parser:
             call_text = f"{name}(_t, {args_text})" if args_text else f"{name}(_t)"
         else:
             call_text = f"{name}({args_text})"
-        return LiveBlock(body=[], return_expr=ExprSpan(call_text))
+        trailing = self._scan_value_span(stop_chars, stop_at_send_modifiers, allow_empty=True).text
+        return LiveBlock(body=[], return_expr=ExprSpan(call_text + trailing))
 
 
 def parse(source: str) -> Program:

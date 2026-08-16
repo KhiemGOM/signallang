@@ -135,6 +135,21 @@ def test_bang_call_reevaluates_every_tick():
     assert [r.value["data"] for r in results] == [0.0, 1.0, 0.0, 1.0]
 
 
+def test_bang_call_shift_delays_the_waveform_start():
+    # same script as above, .shift(1) later - the whole sequence delays
+    # by exactly one tick (negative effective _t wraps via % same as any
+    # other negative input to square's modulo).
+    src = "data = square!(0, 1, 2).shift(1);\nsend hz 1 dur 4t;"
+    results, _ = run_all(src)
+    assert [r.value["data"] for r in results] == [1.0, 0.0, 1.0, 0.0]
+
+
+def test_bang_call_scale_and_add_apply_to_the_live_result_every_tick():
+    src = "data = square!(0, 1, 2).scale(10).add(1);\nsend hz 1 dur 4t;"
+    results, _ = run_all(src)
+    assert [r.value["data"] for r in results] == [1.0, 11.0, 1.0, 11.0]
+
+
 def test_live_shorthand_without_bang_reevaluates_every_tick():
     # `live <expr>;` - the keyword-prefix shorthand for the general case
     # (not a single bang-callable function), still real live semantics.

@@ -9,15 +9,26 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - New signal-shape builtins - plain, pure functions of an explicit
   elapsed-time argument, same as `sin`/`cos`: `square(t, low, high,
   period)`, `triangle(t, low, high, period)`, `sawtooth(t, low, high,
-  period)`, `damped_wave(t, amplitude, decay, period)` (a decaying
-  sinusoid - the natural response shape of an underdamped 2nd-order
-  system like an RLC circuit), and `noise(mean, stddev)` (one Gaussian
-  random draw).
+  period)`, `sinusoidal_wave(t, amplitude, period)`, `damped_wave(t,
+  amplitude, decay, period)` (a decaying sinusoid - the natural response
+  shape of an underdamped 2nd-order system like an RLC circuit), and
+  `noise(mean, stddev)` (one Gaussian random draw).
+- Postfix result transforms `.scale(k)` (multiply) and `.add(k)`/`.bias(k)`
+  (add - two names, one operation), general operators on any numeric
+  value, chainable with each other and with `.s`/`.m`/`.ms` in any order:
+  `_t.s.scale(2).add(1)`.
+- `.shift(offset)`, recognized directly after any function call's closing
+  `)`: subtracts `offset` from the call's first argument before the call
+  is made, then the call proceeds normally (once, or once per tick if
+  wrapped in `live`/`!`, decided independently). Works on both bare and
+  bang calls: `square(5, 0, 1, 10s).shift(3s)` and `square!(0, 1,
+  10s).shift(3s)`.
 - `name!(args)` - live-call sugar for any function, as the whole
   assignment right-hand side: `sin!(t)` desugars to `live { return
   sin(t); };`. For the fixed set of time-shaped builtins (`linear`,
-  `square`, `triangle`, `sawtooth`, `damped_wave`), `!` also injects `_t`
-  as the leading argument so the call keeps its ergonomic shape -
+  `square`, `triangle`, `sawtooth`, `damped_wave`, `sinusoidal_wave`), `!`
+  also injects `_t` as the leading argument so the call keeps its
+  ergonomic shape -
   `linear!(20, 30, 10s)`, not `linear!(_t, 20, 30, 10s)`.
 - `field = live <expr>;` - a one-line shorthand for `live { return
   <expr>; };`, for any live expression that isn't a single bang-callable

@@ -162,6 +162,84 @@ def test_bang_syntax_is_a_parse_time_construct_not_an_expr_operator():
         evaluate("1 + sin!(t)", {"t": 1.0})
 
 
+# -- postfix result transforms: .scale/.add/.bias ---------------------------
+
+@pytest.mark.parametrize(
+    "expr, variables, expected",
+    [
+        ("(5).scale(2)", {}, 10.0),
+        ("(5).add(2)", {}, 7.0),
+        ("(5).bias(2)", {}, 7.0),  # .bias is an alias for .add
+        ("sin(0).add(1)", {}, 1.0),
+        ("(5).scale(2).add(3)", {}, 13.0),  # chained left to right
+        ("(5).add(3).scale(2)", {}, 16.0),  # order matters
+        ("t.s.scale(2)", {"t": 5.0}, 10.0),  # chains with the .s time-unit view
+    ],
+)
+def test_value_method_postfix(expr, variables, expected):
+    assert evaluate(expr, variables) == pytest.approx(expected)
+
+
+def test_value_methods_chain_freely_with_time_unit_postfix():
+    # .s/.m/.ms and .scale/.add/.bias chain in any order and any count -
+    # _postfix() loops instead of matching a single suffix.
+    assert evaluate("(120).m", {}) == pytest.approx(2.0)  # 120s -> 2 minutes
+    assert evaluate("(120).m.scale(3)", {}) == pytest.approx(6.0)
+    assert evaluate("(1).m.add(0.5)", {}) == pytest.approx(1 / 60 + 0.5)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        '"a".scale(2)',
+        '"a".add(1)',
+        '(5).scale("a")',
+        '(5).add("a")',
+    ],
+)
+def test_value_method_rejects_string_operands(expr):
+    with pytest.raises(ExprError):
+        evaluate(expr, {})
+
+
+# -- .shift(offset): rewrites a call's first argument before calling -------
+
+@pytest.mark.parametrize(
+    "expr, expected",
+    [
+        ("square(5, 0, 100, 10).shift(1)", 0.0),  # == square(4, 0, 100, 10)
+        ("square(4, 0, 100, 10)", 0.0),
+        ("square(0, 0, 1, 2).shift(-1)", 1.0),  # negative shift == square(1, ...)
+        ("square(1, 0, 1, 2)", 1.0),
+        ("square(0, 0, 1, 2).shift(1)", 1.0),  # negative effective t wraps via %
+    ],
+)
+def test_shift_rewrites_first_argument(expr, expected):
+    assert evaluate(expr, {}) == pytest.approx(expected)
+
+
+def test_shift_chains_with_value_methods():
+    # shift happens before the call; scale/add apply to the call's result.
+    assert evaluate("square(5, 0, 100, 10).shift(1).scale(2).add(3)", {}) == pytest.approx(3.0)
+
+
+def test_shift_requires_at_least_one_argument():
+    with pytest.raises(ExprError):
+        evaluate("random().shift(1)", {})
+
+
+def test_shift_requires_a_number_offset():
+    with pytest.raises(ExprError):
+        evaluate('square(5, 0, 100, 10).shift("a")', {})
+
+
+def test_shift_only_recognized_directly_after_a_call():
+    # a bare variable/atom isn't a call - '.shift' has nothing to attach
+    # to, so it's just unconsumed trailing input.
+    with pytest.raises(ExprError):
+        evaluate("t.shift(1)", {"t": 5.0})
+
+
 # -- strings ---------------------------------------------------------------
 
 @pytest.mark.parametrize(

@@ -118,10 +118,16 @@ Loosest to tightest binding: `or` → `and` → `not` → comparison
 | `terop(cond, then, else)` | conditional expression; both branches are evaluated |
 | Duration literals | `10s`, `3m`, `500ms`, `10t` (ticks); normalized to seconds at parse time |
 | `.s` / `.m` / `.ms` | postfix unit view — `_t.s` reads a timer's value in seconds |
+| `.scale(k)` | postfix result transform — multiplies the value by `k` |
+| `.add(k)` / `.bias(k)` | postfix result transform — adds `k` to the value; two names for the same operation |
 
 Only names declared with `var`, plus the language-defined names `t`,
 `_t`, and (inside a `for` loop) `i`, are in scope. There is no ambient
 global namespace.
+
+`.s`, `.m`, `.ms`, `.scale(k)`, and `.add(k)`/`.bias(k)` chain in any
+order and any count: `_t.s.scale(2).add(1)`. None accept a string
+operand.
 
 ### Strings
 
@@ -255,6 +261,32 @@ evaluates the call once per tick.
 `sinusoidal_wave` are the set whose `!` sugar also inserts `_t` as the
 first argument: `square!(0, 1, 2s)`, not `square!(_t, 0, 1, 2s)`. Every
 other function's `!` passes its arguments exactly as written.
+
+### `.shift(offset)`
+
+```
+name(args).shift(offset)
+```
+
+Recognized directly after a function call's closing `)`. Subtracts
+`offset` from the call's first argument, then makes the call with the
+modified argument list; the result is otherwise ordinary — evaluated
+once if the call is not wrapped in `live`/`!`, once per tick if it is.
+
+```
+square!(0, 1, 10s).shift(3s)    # equivalent to: live { return square(_t - 3s, 0, 1, 10s); };
+square(5, 0, 1, 10s).shift(3s)  # equivalent to: square(5 - 3s, 0, 1, 10s), evaluated once
+```
+
+Requires the call to take at least one argument; requires the first
+argument and `offset` to both be numbers. A value below the underlying
+function's normal domain (a negative elapsed time) is passed through
+unmodified — `square`/`triangle`/`sawtooth` use `%`, which is defined for
+negative input; `linear` extrapolates below `a` rather than clamping to
+it. `.shift(...)` following anything other than a function call (a bare
+variable, a parenthesized expression) is a syntax error. `.shift(...)`
+composes with `.scale(...)`/`.add(...)`/`.bias(...)`, which apply to the
+call's result: `square!(0, 1, 10s).shift(3s).scale(2)`.
 
 ```
 var mt = timer();               # an explicit named timer

@@ -237,6 +237,20 @@ def test_bare_call_without_bang_is_a_plain_expr_span():
     assert prog.body[0].value == ExprSpan("sin(t)")
 
 
+def test_bang_call_carries_trailing_postfix_chain_verbatim():
+    # .shift/.scale/.add/.bias are expr.py syntax, not parser syntax - the
+    # parser just carries the raw text through onto the desugared call.
+    prog = parse("data = square!(0, 1, 2s).shift(1s).scale(5).add(1);")
+    node = prog.body[0].value
+    assert isinstance(node, LiveBlock)
+    assert node.return_expr.text == "square(_t, 0, 1, 2s).shift(1s).scale(5).add(1)"
+
+
+def test_bang_call_with_no_trailing_chain_is_unaffected():
+    prog = parse("data = sin!(t);")
+    assert prog.body[0].value.return_expr.text == "sin(t)"
+
+
 def test_field_name_can_shadow_a_function_name():
     # geometry_msgs/Twist really does have a field called `linear`, distinct
     # from the linear!(...) builtin - the collision must not be an error.
