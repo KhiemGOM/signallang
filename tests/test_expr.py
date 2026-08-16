@@ -264,6 +264,92 @@ def test_shift_only_recognized_within_a_call_postfix_chain():
         evaluate("t.shift(1)", {"t": 5.0})
 
 
+# -- arrays and objects ------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "expr, variables, expected",
+    [
+        ("[1, 2, 3]", {}, [1.0, 2.0, 3.0]),
+        ("[]", {}, []),
+        ("[1, 2, 3][0]", {}, 1.0),
+        ("[1, 2, 3][2]", {}, 3.0),
+        ("[[1, 2], [3, 4]][1][0]", {}, 3.0),
+        ('json { a: 1, b: 2 }["a"]', {}, 1.0),
+        ("json { a: 1, b: 2 }.b", {}, 2.0),
+        ('json { "x": 5, y: 6 }.x', {}, 5.0),  # quoted and bare keys both work
+        ('json { "x": 5, y: 6 }["y"]', {}, 6.0),
+        ('json { header: json { frame_id: "map" }, pts: [1, 2] }.header.frame_id', {}, "map"),
+        ('json { header: json { frame_id: "map" }, pts: [1, 2] }.pts[1]', {}, 2.0),
+        ("[i, i + 1, i + 2]", {"i": 5.0}, [5.0, 6.0, 7.0]),
+        ("json {}", {}, {}),
+    ],
+)
+def test_array_and_object_literals(expr, variables, expected):
+    assert evaluate(expr, variables) == expected
+
+
+def test_terop_can_select_between_two_objects():
+    assert evaluate("terop(true, json {a: 1}, json {b: 2}).a", {}) == 1.0
+    assert evaluate("terop(false, json {a: 1}, json {b: 2}).b", {}) == 2.0
+
+
+@pytest.mark.parametrize(
+    "expr, variables, expected",
+    [
+        ("terop([], 1, 0)", {}, 0.0),  # empty array is falsy
+        ("terop([1], 1, 0)", {}, 1.0),
+        ("terop(json {}, 1, 0)", {}, 0.0),  # empty object is falsy
+        ("terop(json {a: 1}, 1, 0)", {}, 1.0),
+    ],
+)
+def test_array_and_object_truthiness(expr, variables, expected):
+    assert evaluate(expr, variables) == expected
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "[1, 2, 3][5]",  # out of range
+        "[1, 2, 3][-1]",  # negative index rejected, not Python-style wraparound
+        '[1, 2, 3]["a"]',  # array index must be a number
+        "[1, 2, 3][1.5]",  # array index must be a whole number
+        'json {a: 1}["z"]',  # missing key
+        "json {a: 1}[1]",  # object key must be a string
+        "(5)[0]",  # cannot index into a number
+        '"x"[0]',  # cannot index into a string
+        "[1, 2] + [3, 4]",  # arithmetic rejected on arrays
+        "[1, 2] - [3, 4]",
+        "-([1, 2])",
+        "json {a: 1}.b",  # dot-access on a missing key
+        "[1, 2].s",  # time-unit view rejected on an array
+    ],
+)
+def test_array_and_object_type_errors(expr):
+    with pytest.raises(ExprError):
+        evaluate(expr, {})
+
+
+def test_dot_access_then_numeric_postfix_composes():
+    # once .a resolves to a plain number, the usual numeric postfixes
+    # apply to it normally - only the *object* itself rejects them.
+    assert evaluate("json {a: 1}.a.scale(2)", {}) == 2.0
+
+
+def test_equality_works_structurally_on_arrays_and_objects():
+    # Python's own == already does deep structural comparison for free -
+    # no extra code needed in _COMPARISONS for this.
+    assert evaluate("[1, 2] == [1, 2]", {}) == 1.0
+    assert evaluate("[1, 2] == [1, 3]", {}) == 0.0
+    assert evaluate("json {a: 1} == json {a: 1}", {}) == 1.0
+
+
+def test_var_can_hold_and_be_indexed_as_a_compound_value():
+    # exercises the variable-lookup path specifically (not just a fresh
+    # literal), since that's where the int/list/dict coercion logic lives.
+    assert evaluate("arr[1]", {"arr": [10.0, 20.0, 30.0]}) == 20.0
+    assert evaluate('obj["k"]', {"obj": {"k": 42.0}}) == 42.0
+
+
 # -- strings ---------------------------------------------------------------
 
 @pytest.mark.parametrize(

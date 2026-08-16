@@ -399,11 +399,11 @@ class Parser:
                 in_string = True
                 i += 1
                 continue
-            if c in "([":
+            if c in "([{":
                 depth += 1
             elif depth == 0 and c == ";":
                 break
-            elif c in ")]":
+            elif c in ")]}":
                 if depth == 0:
                     raise ScriptError(f"unmatched '{c}'", i)
                 depth -= 1

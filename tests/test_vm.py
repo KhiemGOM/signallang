@@ -164,3 +164,26 @@ def test_plain_call_without_bang_is_static_once():
     src = "data = sin(t);\nsend hz 1 dur 3t;"
     results, _ = run_all(src)
     assert results[0].value["data"] == results[1].value["data"] == results[2].value["data"]
+
+
+def test_var_holding_an_array_can_be_indexed():
+    src = "var arr = [10, 20, 30];\ndata = arr[1];\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 20.0
+
+
+def test_json_object_as_whole_message_needs_no_schema():
+    # this is the point of json {} - unlike positional [] array fill, it
+    # names its own fields, so it works with schema_provider=None.
+    src = 'msg = json { header: json { frame_id: "map" }, temperature: 20.0 };\nsend hz 1 dur 1t;'
+    results, _ = run_all(src)
+    assert results[0].value == {"header": {"frame_id": "map"}, "temperature": 20.0}
+
+
+def test_json_object_as_a_positional_array_fill_element():
+    # a json {} element inside the OUTER positional-fill array still
+    # needs a schema (the outer [] hasn't changed meaning), but the
+    # element itself is schema-free.
+    schema = DictSchemaProvider({"first": 0.0, "second": 0.0})
+    results, _ = run_all("send [json { a: 1, b: 2 }, 5];", schema_provider=schema)
+    assert results[0].value == {"first": {"a": 1.0, "b": 2.0}, "second": 5.0}

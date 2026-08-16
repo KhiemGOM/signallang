@@ -5,16 +5,17 @@ import random
 from typing import Callable, Union
 
 
-Value = Union[float, str]
+Value = Union[float, str, list, dict]
 
 
 def is_truthy(value: Value) -> bool:
     """The one truthiness rule for and/or/not, terop's cond, and if/repeat
-    conditions: a string is truthy iff non-empty, a number iff nonzero -
-    plain Python truthiness, made explicit so nothing falls back to `value
-    != 0.0`, which is wrong for strings (a str is never == or != a float,
-    so that check would call every string truthy, empty or not)."""
-    return len(value) > 0 if isinstance(value, str) else value != 0.0
+    conditions: plain Python truthiness (0.0/""/[]/{} are falsy, anything
+    else truthy), made explicit rather than left to a bare `value != 0.0`
+    comparison, which is wrong for a non-float value - a str is never ==
+    or != a float, so that check would call every string truthy, empty or
+    not, and the same problem would recur for every future value type."""
+    return bool(value)
 
 
 def _terop(cond: Value, then: Value, otherwise: Value) -> Value:
@@ -152,7 +153,35 @@ class ExprError(ValueError):
 
 
 def _type_name(value: Value) -> str:
-    return "string" if isinstance(value, str) else "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return "number"
+
+
+def _index_into(container: Value, index: Value) -> Value:
+    """arr[i] / obj["key"] - a whole-number index into an array, or a
+    string key into an object. The one place that actually reads out of
+    a compound value; everything upstream just builds them."""
+    if isinstance(container, list):
+        if not isinstance(index, float):
+            raise ExprError(f"array index must be a number, got {_type_name(index)}")
+        i = int(index)
+        if i != index:
+            raise ExprError(f"array index must be a whole number, got {index}")
+        if i < 0 or i >= len(container):
+            raise ExprError(f"array index {i} out of range (length {len(container)})")
+        return container[i]
+    if isinstance(container, dict):
+        if not isinstance(index, str):
+            raise ExprError(f"object key must be a string, got {_type_name(index)}")
+        if index not in container:
+            raise ExprError(f"object has no key {index!r}")
+        return container[index]
+    raise ExprError(f"cannot index into a {_type_name(container)}")
 
 
 class _Parser:
@@ -251,21 +280,22 @@ class _Parser:
                 self.pos += 1
                 right = self._term()
                 # str + str concatenates, float + float adds - anything
-                # mixed is a clear error rather than Python's own TypeError
-                # text. Branching explicitly (rather than an XOR guard
+                # else (including an array or object on either side) is a
+                # clear error rather than Python's own TypeError text.
+                # Branching explicitly (rather than an isinstance guard
                 # followed by one `value + right`) lets mypy actually prove
-                # each arm's operand types instead of seeing two unions.
+                # each arm's operand types instead of seeing a 4-way union.
                 if isinstance(value, str) and isinstance(right, str):
                     value = value + right
-                elif isinstance(value, str) or isinstance(right, str):
-                    raise ExprError(f"cannot use '+' between {_type_name(value)} and {_type_name(right)}")
-                else:
+                elif isinstance(value, float) and isinstance(right, float):
                     value = value + right
+                else:
+                    raise ExprError(f"cannot use '+' between {_type_name(value)} and {_type_name(right)}")
             elif c == "-":
                 self.pos += 1
                 right = self._term()
-                if isinstance(value, str) or isinstance(right, str):
-                    raise ExprError(f"'-' is not supported for strings ({_type_name(value)} and {_type_name(right)})")
+                if not (isinstance(value, float) and isinstance(right, float)):
+                    raise ExprError(f"'-' requires two numbers, got {_type_name(value)} and {_type_name(right)}")
                 value = value - right
             else:
                 return value
@@ -277,22 +307,22 @@ class _Parser:
             if c == "*":
                 self.pos += 1
                 right = self._unary()
-                if isinstance(value, str) or isinstance(right, str):
-                    raise ExprError(f"'*' is not supported for strings ({_type_name(value)} and {_type_name(right)})")
+                if not (isinstance(value, float) and isinstance(right, float)):
+                    raise ExprError(f"'*' requires two numbers, got {_type_name(value)} and {_type_name(right)}")
                 value = value * right
             elif c == "/":
                 self.pos += 1
                 right = self._unary()
-                if isinstance(value, str) or isinstance(right, str):
-                    raise ExprError(f"'/' is not supported for strings ({_type_name(value)} and {_type_name(right)})")
+                if not (isinstance(value, float) and isinstance(right, float)):
+                    raise ExprError(f"'/' requires two numbers, got {_type_name(value)} and {_type_name(right)}")
                 if right == 0:
                     raise ExprError("division by zero")
                 value = value / right
             elif c == "%":
                 self.pos += 1
                 right = self._unary()
-                if isinstance(value, str) or isinstance(right, str):
-                    raise ExprError(f"'%' is not supported for strings ({_type_name(value)} and {_type_name(right)})")
+                if not (isinstance(value, float) and isinstance(right, float)):
+                    raise ExprError(f"'%' requires two numbers, got {_type_name(value)} and {_type_name(right)}")
                 value = value % right
             else:
                 return value
@@ -302,8 +332,8 @@ class _Parser:
         if c == "-":
             self.pos += 1
             value = self._unary()
-            if isinstance(value, str):
-                raise ExprError("unary '-' is not supported for strings")
+            if not isinstance(value, float):
+                raise ExprError(f"unary '-' requires a number, got {_type_name(value)}")
             return -value
         if c == "+":
             self.pos += 1
@@ -366,12 +396,14 @@ class _Parser:
             if word == "shift":
                 if not args:
                     raise ExprError(f"'.shift(...)' requires '{name}' to take at least one argument")
-                if isinstance(args[0], str):
-                    raise ExprError(f"'.shift(...)' is not supported - '{name}''s first argument is a string")
+                if not isinstance(args[0], float):
+                    raise ExprError(
+                        f"'.shift(...)' is not supported - '{name}''s first argument is {_type_name(args[0])}"
+                    )
                 self.pos = name_end + 1
                 offset = self._or()
-                if isinstance(offset, str):
-                    raise ExprError("'.shift(...)' requires a number argument, got a string")
+                if not isinstance(offset, float):
+                    raise ExprError(f"'.shift(...)' requires a number argument, got {_type_name(offset)}")
                 if self._peek() != ")":
                     raise ExprError("expected ')'")
                 self.pos += 1
@@ -395,43 +427,64 @@ class _Parser:
         order those operators were originally written."""
         for kind, payload in pending:
             if kind == "unit":
-                if isinstance(value, str):
-                    raise ExprError(f"'.{payload}' is not supported for strings")
+                if not isinstance(value, float):
+                    raise ExprError(f"'.{payload}' requires a number, got {_type_name(value)}")
                 value = value / _TIME_UNITS[payload]
             else:
-                if isinstance(value, str):
-                    raise ExprError(f"'.{kind}(...)' is not supported for strings")
-                if isinstance(payload, str):
-                    raise ExprError(f"'.{kind}(...)' requires a number argument, got a string")
+                if not isinstance(value, float):
+                    raise ExprError(f"'.{kind}(...)' requires a number, got {_type_name(value)}")
+                if not isinstance(payload, float):
+                    raise ExprError(f"'.{kind}(...)' requires a number argument, got {_type_name(payload)}")
                 value = _VALUE_METHODS[kind](value, payload)
         return value
 
     def _postfix(self, value: Value) -> Value:
-        """Chainable postfix operators, applied left to right:
-        - .s/.m/.ms - a unit *view* onto a value already stored in seconds
-          (X.s == X, X.m == X/60, X.ms == X*1000). Takes no argument.
-        - .scale(expr) - multiplies by expr.
-        - .add(expr) / .bias(expr) - adds expr (two names, one operation:
-          "add" for plain arithmetic, "bias" for a signal's DC offset).
-        Applies uniformly to timers (t.s, _t.ms), function results
-        (square!(0, 1, 2s).scale(5)), and any other numeric expression -
-        nothing here is really "attribute access", these are fixed,
-        always-available postfix operators, chainable in any combination
-        (`x.s.scale(2).add(1)`). None of them accept a string operand;
-        matching the syntax but then rejecting the type (rather than
-        silently leaving it unconsumed) gives a clear error instead of a
-        confusing "unexpected trailing input"."""
+        """Chainable postfix operators/accessors, applied left to right:
+        - [expr] - indexes into an array (expr must be a whole number) or
+          an object (expr must be a string key). Chainable: arr[1][2].
+        - .identifier - sugar for ["identifier"], recognized only when
+          value is an object, and takes priority over the fixed operator
+          names below (none of which mean anything on an object anyway).
+        - .s/.m/.ms - a unit *view* onto a number already stored in
+          seconds (X.s == X, X.m == X/60, X.ms == X*1000). No argument.
+        - .scale(expr) - multiplies a number by expr.
+        - .add(expr) / .bias(expr) - adds expr to a number (two names,
+          one operation: "add" for plain arithmetic, "bias" for a
+          signal's DC offset).
+        Chainable in any combination (`x.s.scale(2).add(1)`,
+        `arr[0].header`). Anything requiring a number rejects a string,
+        array, or object operand with a clear error instead of silently
+        leaving it unconsumed as "unexpected trailing input"."""
         while True:
             save = self.pos
             self._skip_ws()
+            if self.pos < len(self.text) and self.text[self.pos] == "[":
+                self.pos += 1
+                index = self._or()
+                if self._peek() != "]":
+                    raise ExprError("expected ']'")
+                self.pos += 1
+                value = _index_into(value, index)
+                continue
             if self.pos >= len(self.text) or self.text[self.pos] != ".":
                 self.pos = save
                 return value
             after_dot = self.pos + 1
+            if isinstance(value, dict):
+                name_end = after_dot
+                while name_end < len(self.text) and (self.text[name_end].isalnum() or self.text[name_end] == "_"):
+                    name_end += 1
+                key = self.text[after_dot:name_end]
+                if not key:
+                    self.pos = save
+                    return value
+                self.pos = name_end
+                value = _index_into(value, key)
+                continue
             unit = self._match_time_unit(after_dot)
             if unit is not None:
-                if isinstance(value, str):
-                    raise ExprError(f"'.{unit}' is not supported for strings")
+                if not isinstance(value, float):
+                    raise ExprError(f"'.{unit}' requires a number, got {_type_name(value)}")
                 self.pos = after_dot + len(unit)
                 value = value / _TIME_UNITS[unit]
                 continue
@@ -440,12 +493,12 @@ class _Parser:
                 name_end += 1
             method_name = self.text[after_dot:name_end]
             if method_name in _VALUE_METHODS and name_end < len(self.text) and self.text[name_end] == "(":
-                if isinstance(value, str):
-                    raise ExprError(f"'.{method_name}(...)' is not supported for strings")
+                if not isinstance(value, float):
+                    raise ExprError(f"'.{method_name}(...)' requires a number, got {_type_name(value)}")
                 self.pos = name_end + 1
                 arg = self._or()
-                if isinstance(arg, str):
-                    raise ExprError(f"'.{method_name}(...)' requires a number argument, got a string")
+                if not isinstance(arg, float):
+                    raise ExprError(f"'.{method_name}(...)' requires a number argument, got {_type_name(arg)}")
                 if self._peek() != ")":
                     raise ExprError("expected ')'")
                 self.pos += 1
@@ -469,6 +522,43 @@ class _Parser:
         self.pos += 1  # closing quote
         return value
 
+    def _parse_json_object(self) -> dict:
+        """`{ key: expr, key: expr, ... }`, called with self.pos already
+        past the opening '{'. A key is a bare identifier or a quoted
+        string - either way it becomes a plain string dict key. Values
+        are ordinary expressions, so json objects nest freely inside
+        each other and inside array literals: `json { a: [1, 2], b:
+        json { c: 3 } }`."""
+        self.pos += 1  # '{'
+        obj: dict = {}
+        self._skip_ws()
+        if self._peek() != "}":
+            self._parse_json_entry(obj)
+            while self._peek() == ",":
+                self.pos += 1
+                self._parse_json_entry(obj)
+        if self._peek() != "}":
+            raise ExprError("expected '}'")
+        self.pos += 1
+        return obj
+
+    def _parse_json_entry(self, obj: dict) -> None:
+        self._skip_ws()
+        if self.pos < len(self.text) and self.text[self.pos] == '"':
+            key = self._parse_string_literal()
+        elif self.pos < len(self.text) and (self.text[self.pos].isalpha() or self.text[self.pos] == "_"):
+            start = self.pos
+            while self.pos < len(self.text) and (self.text[self.pos].isalnum() or self.text[self.pos] == "_"):
+                self.pos += 1
+            key = self.text[start : self.pos]
+        else:
+            raise ExprError("expected a json key (identifier or string)")
+        self._skip_ws()
+        if self._peek() != ":":
+            raise ExprError("expected ':' after json key")
+        self.pos += 1
+        obj[key] = self._or()
+
     def _atom(self) -> Value:
         self._skip_ws()
         if self.pos >= len(self.text):
@@ -476,6 +566,26 @@ class _Parser:
         c = self.text[self.pos]
         if c == '"':
             return self._postfix(self._parse_string_literal())
+        if c == "[":
+            self.pos += 1
+            elements: list = []
+            self._skip_ws()
+            if self._peek() != "]":
+                elements.append(self._or())
+                while self._peek() == ",":
+                    self.pos += 1
+                    elements.append(self._or())
+            if self._peek() != "]":
+                raise ExprError("expected ']'")
+            self.pos += 1
+            return self._postfix(elements)
+        if self._looking_at_word("json"):
+            save = self.pos
+            self.pos += 4
+            self._skip_ws()
+            if self.pos < len(self.text) and self.text[self.pos] == "{":
+                return self._postfix(self._parse_json_object())
+            self.pos = save  # "json" used as an ordinary identifier, not a literal
         if c == "(":
             self.pos += 1
             value = self._or()
@@ -520,11 +630,27 @@ class _Parser:
                     raise ExprError(f"function '{name}' got an invalid argument type: {exc}") from None
                 except (ValueError, ZeroDivisionError) as exc:
                     raise ExprError(f"function '{name}' failed: {exc}") from None
-                result = result if isinstance(result, str) else float(result)
-                return self._apply_pending_postfix(result, pending)
+                # floor()/ceil() return a plain int, not float - normalize
+                # that; str/list/dict (terop can produce any Value) pass
+                # through untouched.
+                if not isinstance(result, (str, list, dict)):
+                    result = float(result)
+                result = self._apply_pending_postfix(result, pending)
+                # _consume_call_postfix_chain only understands .shift/
+                # .scale/.add/.bias/.s/.m/.ms - indexing (arr[i], obj.key)
+                # isn't part of that scan, so anything it left unconsumed
+                # (terop(...).a, a call returning an array then [0], ...)
+                # still needs an ordinary _postfix() pass.
+                return self._postfix(result)
             if name in self.variables:
                 value = self.variables[name]
-                return self._postfix(value if isinstance(value, str) else float(value))
+                # callers (e.g. tests, or vm.py's own scope dict) may
+                # hand in a plain int for a numeric variable - coerce
+                # that to float, same as every literal in this language
+                # already is, without touching str/list/dict.
+                if isinstance(value, int):
+                    value = float(value)
+                return self._postfix(value)
             if name in _CONSTANTS:
                 return self._postfix(_CONSTANTS[name])
             raise ExprError(f"unknown identifier '{name}'")

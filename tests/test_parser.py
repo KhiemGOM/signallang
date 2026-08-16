@@ -190,6 +190,17 @@ def test_nested_array_literal():
     assert len(outer.elements[0].elements) == 3
 
 
+def test_json_object_nested_inside_a_positional_array_element():
+    # regression test for span.py's {}-depth tracking: the array-element
+    # scanner (stop_chars=",]") must not mistake a json object's own
+    # internal ',' for the outer array's element separator.
+    prog = parse("send [json { a: 1, b: 2 }, 5];")
+    elements = prog.body[0].value.elements
+    assert len(elements) == 2
+    assert elements[0].text == "json { a: 1, b: 2 }"
+    assert elements[1].text == "5"
+
+
 def test_live_block_desugars_and_reads_underscore_t():
     prog = parse("temperature = live { return 20 + _t.s; };")
     node = prog.body[0].value

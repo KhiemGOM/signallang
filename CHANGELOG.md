@@ -6,6 +6,17 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Arrays (`[expr, expr, ...]`) and objects (`json { key: expr, ... }`)
+  as first-class values - assignable to a `var`, nestable inside each
+  other, passable to `terop`. `arr[i]` and `obj["key"]`/`obj.key` index
+  into them, chainable (`arr[0].header.frame_id`). `json {}` assigned
+  directly to a message field or `send` names its own fields and needs
+  no `schema_provider`, unlike positional `[]` array fill (unchanged),
+  which still maps elements to schema fields by position and still
+  requires one. `==`/`!=` compare them structurally for free via
+  Python's own equality; every other operator (arithmetic, ordering, the
+  numeric postfixes) rejects an array/object operand the same way it
+  already rejected a string.
 - New signal-shape builtins - plain, pure functions of an explicit
   elapsed-time argument, same as `sin`/`cos`: `square(t, low, high,
   period)`, `triangle(t, low, high, period)`, `sawtooth(t, low, high,

@@ -25,13 +25,16 @@ def scan_span(text: str, start: int, stop_chars: str) -> int:
             in_string = True
             i += 1
             continue
-        if c in "([":
-            depth += 1
-        elif depth == 0 and c in stop_chars:
-            # a stop char wins even if it's also a closing bracket - e.g.
-            # ")" as the terminator of a function-call argument span.
+        if depth == 0 and c in stop_chars:
+            # a stop char wins even if it's also a bracket character -
+            # e.g. ")" terminating a function-call argument span, or "{"
+            # terminating an if-condition/live-block-opener span (that
+            # opening brace IS the terminator being scanned for, not a
+            # nested region to skip past).
             return i
-        elif c in ")]":
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
             if depth == 0:
                 raise ScriptError(f"unmatched '{c}'", i)
             depth -= 1
@@ -61,13 +64,13 @@ def scan_until_token(text: str, start: int, token: str) -> int:
             in_string = True
             i += 1
             continue
-        if c in "([":
+        if depth == 0 and text[i : i + n] == token:
+            return i
+        if c in "([{":
             depth += 1
-        elif c in ")]":
+        elif c in ")]}":
             if depth == 0:
                 raise ScriptError(f"unmatched '{c}'", i)
             depth -= 1
-        elif depth == 0 and text[i : i + n] == token:
-            return i
         i += 1
     raise ScriptError(f"unexpected end of input while scanning for {token!r}", start)

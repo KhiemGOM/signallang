@@ -152,6 +152,64 @@ strings. Mixing a string with a number anywhere else — arithmetic
 (`- * / %`, unary `-`), ordering, or the `.s`/`.m`/`.ms` unit view — is a
 compile- or eval-time `ExprError`, not a silent coercion.
 
+### Arrays and objects
+
+```
+[expr, expr, ...]
+json { key: expr, key: expr, ... }
+```
+
+An array literal, and an object literal. A key is a bare identifier or a
+quoted string, either form accepted. Both nest freely inside each other
+and inside any expression, and are ordinary values — assignable to a
+`var`, passed to `terop`, held in a field.
+
+```
+var arr = [10, 20, 30];
+data = arr[1];                      # 20.0
+
+var config = json { retries: 3, timeout: 5s };
+data = config["retries"];            # 3.0 - bracket access
+data = config.retries;               # 3.0 - dot access, sugar for the above
+
+msg = json {
+    header: json { frame_id: "map" },
+    points: [1, 2, 3],
+};
+```
+
+Bracket indexing (`arr[0]`) and dot access (`obj.key`) chain in any
+combination: `arr[0].header.frame_id`, `points[1][2]`. Dot access is
+recognized only when the value being accessed is an object — it takes
+priority there over the fixed postfix operator names (`.s`, `.scale`,
+...), none of which mean anything on an object.
+
+An array index must be a whole number within range; an object key that
+does not exist is a compile- or eval-time `ExprError`, not `null`/`None`.
+Arithmetic, ordering, and the numeric postfix operators all reject an
+array or object operand the same way they reject a string. `==`/`!=`
+compare arrays and objects structurally, for free, via Python's own
+equality — no special-casing needed. `terop` may return an array or
+object, so it can select between two of them conditionally.
+
+Assigning a whole object directly to a message field or to `send` names
+its own fields and needs no schema — unlike positional array fill
+(below), which maps each element to a schema field by position and
+therefore requires one:
+
+```
+send json { temperature: 20.0, variance: 0.1 };   # no schema_provider needed
+send [default, 20.0, 0.1];                          # requires a schema_provider
+```
+
+An array literal or `default` sentinel written directly as the entire
+value of a field assignment or `send` is always positional schema fill,
+regardless of what its own elements contain — to index into a freshly
+written array instead, assign it to a `var` first (`var tmp = [1, 2,
+3]; data = tmp[0];`). `default` is only meaningful inside that
+schema-fill form; it is not a valid value inside `json {}` or a general
+array literal, which have no schema to consult.
+
 ### Control flow
 
 ```
