@@ -185,35 +185,57 @@ send [1, 2, 3];                  # value sugar: send this array directly
 statement. `hz` is clamped to a 50Hz safety ceiling (`MAX_HZ`), enforced
 by the compiler.
 
-### Live vs. static — one rule, no exceptions
+### Evaluation timing: static vs. live
 
-A plain assignment evaluates **once** and freezes until reassigned —
-`data = sin(t);` computes `sin(t)` at the moment that instruction runs and
-holds it, exactly like `data = 5;` holds `5`. To make something
-re-evaluate every tick, you always write `live` — there's no function
-whose name secretly makes it live behind your back:
+`field = expr;` evaluates `expr` once, at the point the instruction
+executes, and `field` holds the result until reassigned. This is
+unconditional: `data = sin(t);` evaluates once and freezes, the same as
+`data = 5;`. No function name changes this behavior.
 
-```
-temperature = live { return 20 + sin(t); };   # the full form: locals, if/else allowed
-temperature = live 20 + sin(t);                # shorthand: sugar for the block above
-temperature = live sin(t);                     # any function works the same way live
-```
-
-`name!(args)` is a second, narrower shorthand for the single most common
-case — wrapping one call in `live` with nothing else going on:
+**`live` block**
 
 ```
-temperature = linear!(20, 30, 10s);   # sugar for: live { return linear(_t, 20, 30, 10s); };
-data = sin!(t);                        # sugar for: live { return sin(t); };
+field = live { <statements> return <expr>; };
 ```
 
-`!` is only recognized as the *entire* right-hand side — `data = 1 +
-sin!(t);` doesn't parse as live sugar (it's a syntax error at that `!`);
-write `data = live 1 + sin(t);` instead. `t` is the VM's running tick
-counter; `_t` is a `latching_timer()` implicitly created per `live`
-binding — unstarted until first read, and a fresh one created each time
-its assignment statement (re-)executes, so a ramp inside a `repeat`
-restarts from zero on every lap, for free.
+`<expr>` is evaluated once per tick instead of once total. `<statements>`
+may declare local variables (`var`) and branch (`if`/`else`); it may not
+assign to an outer variable or a message field.
+
+**`live` shorthand**
+
+```
+field = live <expr>;
+```
+
+Equivalent to `field = live { return <expr>; };`.
+
+**Bang-call shorthand**
+
+```
+field = name!(args);
+```
+
+Recognized only when `name!(args)` is the entire right-hand side.
+Equivalent to `field = live { return name(args); };`. For the fixed set
+of time-shaped builtins — `linear`, `square`, `triangle`, `sawtooth`,
+`damped_wave` — the elapsed-time argument is also inserted as the first
+argument: `linear!(20, 30, 10s)` is equivalent to `live { return
+linear(_t, 20, 30, 10s); };`. For every other function, arguments are
+passed exactly as written: `sin!(t)` is equivalent to `live { return
+sin(t); };`.
+
+A bang call is not recognized when embedded inside a larger expression;
+`data = 1 + sin!(t);` is a syntax error at `!`. Use the `live` shorthand
+instead: `data = live 1 + sin(t);`.
+
+**`t` and `_t`**
+
+`t` is the VM's tick counter, in scope everywhere. `_t` is a
+`latching_timer()` scoped to a `live` binding: unset until first read,
+and reset to zero each time the binding's assignment statement is
+(re-)executed. A `live` expression inside a `repeat` body therefore
+restarts from zero on every iteration.
 
 ### Signal-shape builtins
 
