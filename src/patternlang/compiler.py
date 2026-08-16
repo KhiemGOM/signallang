@@ -220,6 +220,12 @@ class Compiler:
     def _compile_send(self, s: Send) -> None:
         if s.value is not None:
             self._emit(SetField([], self._compile_value(s.value)))
+        if s.hz is not None and s.hz <= 0:
+            # left uncaught, this becomes a raw ZeroDivisionError (or a
+            # negative sleep) deep inside the VM/driver - a genuine
+            # authoring mistake, not an internal error, so it needs to be
+            # a clear ScriptError here instead.
+            raise ScriptError(f"hz must be greater than 0, got {s.hz}")
         hz = self.max_hz if s.hz is None else min(s.hz, self.max_hz)
         self._emit(SendInstr(hz=hz, dur_kind=s.dur_kind, dur_value=s.dur_value))
 

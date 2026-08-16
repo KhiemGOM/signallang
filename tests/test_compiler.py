@@ -91,3 +91,19 @@ def test_send_value_sugar_compiles_setfield_then_send():
     kinds = [type(i).__name__ for i in instrs]
     assert kinds == ["SetField", "SendInstr"]
     assert instrs[0].path == []
+
+
+def test_hz_zero_is_a_compile_error_not_a_zero_division_crash():
+    # left unvalidated, this reaches 1.0/hz deep inside the VM/driver as a
+    # raw ZeroDivisionError instead of a clear authoring-mistake message.
+    with pytest.raises(ScriptError):
+        compile_program(parse("send hz 0;"))
+
+
+def test_hz_negative_is_rejected():
+    # `_parse_number` has no unary-minus handling, so this already fails
+    # at parse time ("expected a number") rather than exercising the new
+    # compile-time hz<=0 check - still worth locking in as "rejected
+    # either way, never reaches the VM."
+    with pytest.raises(ScriptError):
+        parse("send hz -5;")
