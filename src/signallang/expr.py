@@ -69,6 +69,14 @@ def _damped_wave(t: float, amplitude: float, decay: float, period: float) -> flo
     return amplitude * math.exp(-decay * t) * math.sin(2.0 * math.pi * t / period)
 
 
+def _sinusoidal_wave(t: float, amplitude: float, period: float) -> float:
+    """A plain sinusoid, centered at 0: amplitude * sin(2*pi*t / period).
+    Equivalent to damped_wave with decay = 0."""
+    if period <= 0:
+        raise ValueError(f"sinusoidal_wave(): period must be greater than 0, got {period}")
+    return amplitude * math.sin(2.0 * math.pi * t / period)
+
+
 def _noise(mean: float, stddev: float) -> float:
     """A single Gaussian-distributed random draw - call it inside a live
     context (`noise!(mean, stddev)`) for fresh jitter every tick, or bare
@@ -82,7 +90,9 @@ def _noise(mean: float, stddev: float) -> float:
 # ergonomic call shape they'd otherwise lose (linear!(20, 30, 10s), not
 # linear!(_t, 20, 30, 10s)). Every other function's bang call wraps its
 # arguments exactly as written - see parser.py's _try_parse_bang_call.
-TIME_SHAPED_FUNCTIONS = frozenset({"linear", "square", "triangle", "sawtooth", "damped_wave"})
+TIME_SHAPED_FUNCTIONS = frozenset(
+    {"linear", "square", "triangle", "sawtooth", "damped_wave", "sinusoidal_wave"}
+)
 
 _FUNCTIONS: dict[str, Callable[..., Value]] = {
     "sin": math.sin,
@@ -100,6 +110,7 @@ _FUNCTIONS: dict[str, Callable[..., Value]] = {
     "triangle": _triangle,
     "sawtooth": _sawtooth,
     "damped_wave": _damped_wave,
+    "sinusoidal_wave": _sinusoidal_wave,
     # terop(cond, then, else) - a plain named function, not a `? :` symbol.
     # Both branches are evaluated eagerly (this parser evaluates as it
     # parses, it doesn't build an AST to defer either side) - a

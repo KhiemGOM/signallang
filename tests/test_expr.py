@@ -119,6 +119,9 @@ def test_terop_dead_branch_still_raises():
         ("sawtooth(0, 0, 10, 4)", {}, 0.0),
         ("sawtooth(2, 0, 10, 4)", {}, 5.0),
         ("damped_wave(0, 5, 0, 1)", {}, 0.0),  # sin(0) == 0 regardless of decay
+        ("sinusoidal_wave(0, 5, 1)", {}, 0.0),  # sin(0) == 0
+        ("sinusoidal_wave(0.25, 5, 1)", {}, 5.0),  # quarter period -> peak
+        ("sinusoidal_wave(1, 5, 1)", {}, 0.0),  # full period -> back to 0
     ],
 )
 def test_signal_shape_builtins(expr, variables, expected):
@@ -134,6 +137,7 @@ def test_signal_shape_builtins(expr, variables, expected):
         "triangle(0, 0, 1, 0)",
         "sawtooth(0, 0, 1, 0)",
         "damped_wave(0, 1, 0, 0)",
+        "sinusoidal_wave(0, 1, 0)",
     ],
 )
 def test_signal_shape_builtins_reject_non_positive_duration(expr):
