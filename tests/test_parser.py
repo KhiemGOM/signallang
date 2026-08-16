@@ -269,6 +269,56 @@ def test_field_name_can_shadow_a_function_name():
     assert prog.body[0].path == ["linear", "x"]
 
 
+# -- shadowing is always rejected -------------------------------------------
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "var i = 1;\nfor i in 0..3 {\n data = i;\n send hz 1 dur 1t;\n}",  # outer var, then for
+        "for i in 0..3 {\n for i in 0..2 {\n data = i;\n send hz 1 dur 1t;\n }\n}",  # nested for, same name
+        "for i in 0..3 {\n var i = 5;\n data = i;\n send hz 1 dur 1t;\n}",  # for, then inner var
+        "var x = 1;\nvar x = 2;\ndata = x;\nsend hz 1 dur 1t;",  # plain redeclaration
+        "data = live {\n var y = 1;\n var y = 2;\n return y;\n};\nsend hz 1 dur 1t;",  # live-local redeclaration
+    ],
+)
+def test_shadowing_is_always_rejected(src):
+    # a for-loop variable is actively mutated throughout the loop's
+    # execution, not just given an initial value - reusing the name of
+    # anything already in scope means both bindings share the same flat
+    # runtime slot and silently corrupt each other while the loop runs.
+    # Applies uniformly everywhere a new binding is introduced (var
+    # declarations, for-loop variables), not just the for-loop case.
+    with pytest.raises(ScriptError):
+        parse(src)
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "var linear = 5;",
+        "var sin = 5;",
+        "var pi = 5;",
+        "var true = 5;",
+        "for sin in 0..3 {\n data = 1;\n send hz 1 dur 1t;\n}",
+    ],
+)
+def test_var_and_for_loop_names_cannot_shadow_a_builtin_or_constant(src):
+    # var linear = 5; would otherwise silently work today, but
+    # linear(...)/linear!(...) in the same scope would then be genuinely
+    # ambiguous between the var and the builtin - blocked outright rather
+    # than relying on a syntax-position tiebreak (the '(' check in
+    # _atom()) to paper over it.
+    with pytest.raises(ScriptError):
+        parse(src)
+
+
+def test_sequential_non_overlapping_for_loops_can_reuse_a_name():
+    # shadowing is about overlapping scope, not the name itself - two
+    # sibling for loops that never nest are fine reusing "i".
+    prog = parse("for i in 0..2 {\n data = i;\n send hz 1 dur 1t;\n}\nfor i in 0..2 {\n data = i;\n send hz 1 dur 1t;\n}")
+    assert len(prog.body) == 2
+
+
 def test_comments_are_stripped():
     prog = parse("data = 1; // this is fine\nsend;")
     assert prog.body[0].value.text == "1"

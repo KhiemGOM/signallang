@@ -120,6 +120,15 @@ _FUNCTIONS: dict[str, Callable[..., Value]] = {
     "terop": _terop,
 }
 _CONSTANTS = {"pi": math.pi, "e": math.e, "true": 1.0, "false": 0.0}
+# Every built-in function and constant name - reserved so a var or
+# for-loop variable can never shadow one. Without this, `var linear = 5;`
+# would silently work, but then `linear(...)`/`linear!(...)` inside the
+# same scope would be genuinely ambiguous between the var and the
+# builtin (function-call syntax happens to win via the `(` check in
+# _atom(), but a bare `data = linear;` would resolve to the var instead -
+# confusing either way, so the name is blocked outright rather than
+# relying on a syntax-position tiebreak to paper over it).
+RESERVED_NAMES = frozenset(_FUNCTIONS) | frozenset(_CONSTANTS)
 # Every time-like quantity in this language is stored internally as a plain
 # float in seconds - a duration literal (10s, 3m, 500ms) normalizes to
 # seconds at parse time; the postfix .s/.m/.ms operator is the reverse view

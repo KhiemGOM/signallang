@@ -25,7 +25,7 @@ from .ast_nodes import (
     VarDecl,
 )
 from .errors import ScriptError
-from .expr import TIME_SHAPED_FUNCTIONS
+from .expr import RESERVED_NAMES, TIME_SHAPED_FUNCTIONS
 
 _UNIT_SUFFIXES = ("ms", "s", "m", "t")  # longest match first
 _KEYWORDS = frozenset(
@@ -122,8 +122,8 @@ class Parser:
         while self.pos < len(self.text) and (self.text[self.pos].isalnum() or self.text[self.pos] == "_"):
             self.pos += 1
         name = self.text[start : self.pos]
-        if name in _KEYWORDS:
-            raise ScriptError(f"'{name}' is a reserved word, not a valid name here", start)
+        if name in _KEYWORDS or name in RESERVED_NAMES:
+            raise ScriptError(f"'{name}' is reserved (a keyword or a built-in), not a valid name here", start)
         return name
 
     def _parse_path_ident(self) -> str:
@@ -206,6 +206,23 @@ class Parser:
             return self._parse_send()
         return self._parse_path_stmt()
 
+    def _declare_var(self, name: str) -> None:
+        """Registers name as a new locally-declared variable, rejecting a
+        collision with anything already in scope (an outer var, or an
+        enclosing for loop's own variable). Both would share the same
+        flat runtime slot and silently corrupt each other - particularly
+        bad for a for-loop's own counter, which is actively mutated
+        throughout the loop's execution, not just given an initial
+        value once."""
+        if name in self.known_vars:
+            raise ScriptError(
+                f"'{name}' is already in scope (an outer var or an enclosing for loop) - "
+                "redeclaring it would share the same slot and silently corrupt whichever "
+                "binding runs longer",
+                self.pos,
+            )
+        self.known_vars.add(name)
+
     def _parse_var_decl(self):
         self._advance_word("var")
         name = self._parse_ident()
@@ -216,18 +233,18 @@ class Parser:
             self._expect_char("(")
             self._expect_char(")")
             self._expect_char(";")
-            self.known_vars.add(name)
+            self._declare_var(name)
             return TimerDecl(name=name, kind="eager")
         if self._looking_at_word("latching_timer"):
             self._advance_word("latching_timer")
             self._expect_char("(")
             self._expect_char(")")
             self._expect_char(";")
-            self.known_vars.add(name)
+            self._declare_var(name)
             return TimerDecl(name=name, kind="latching")
         value = self._scan_expr_span(";")
         self._expect_char(";")
-        self.known_vars.add(name)
+        self._declare_var(name)
         return VarDecl(name=name, value=value)
 
     def _parse_path_stmt(self):
@@ -314,9 +331,10 @@ class Parser:
         else:
             end = self._scan_expr_span("{")
         self._expect_char("{")
-        self.known_vars.add(var)
+        self._declare_var(var)
         body = self._parse_block_until("}", self._parse_stmt)
         self._expect_char("}")
+        self.known_vars.discard(var)
         return For(var=var, start=start_span, end=end, body=body)
 
     def _parse_send(self):

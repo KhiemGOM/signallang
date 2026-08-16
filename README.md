@@ -126,6 +126,18 @@ whatever identifier follows `for` — `i` is convention, not a reserved
 name; `for row in 0..7` works identically), and the language-defined
 names `t`/`_t`, are in scope. There is no ambient global namespace.
 
+A `var` or `for` loop variable can never shadow anything: not a
+language keyword, not the name of a built-in function or constant
+(`var linear = 5;`, `for sin in 0..3 { ... }` are both errors), and not
+another `var` or `for` variable already in scope, including an
+enclosing `for` loop's own variable. This is a compile-time error, not
+a warning — a `for` loop's variable is actively mutated throughout the
+loop's execution, not just given an initial value once, so two bindings
+sharing a name would share the same runtime slot and silently corrupt
+each other while the loop runs. Two *sequential*, non-overlapping `for`
+loops may still reuse the same name freely; the rule is about
+overlapping scope, not the identifier itself.
+
 `.s`, `.m`, `.ms`, `.scale(k)`, and `.add(k)`/`.bias(k)` chain in any
 order and any count: `_t.s.scale(2).add(1)`. None accept a string
 operand.

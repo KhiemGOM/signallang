@@ -5,6 +5,23 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- A `var` or `for` loop variable could silently shadow anything: an
+  outer `var`, an enclosing `for` loop's own variable, even a built-in
+  function or constant name (`var linear = 5;` used to just work). None
+  of these are actually harmless - a `for` loop's variable is mutated
+  throughout the loop's execution, not just given an initial value, so
+  two bindings sharing a name silently corrupted each other while the
+  loop ran (confirmed: an outer `var i` gets overwritten by a same-named
+  `for i`, and nested `for i { for i { ... } }` corrupts the *outer*
+  loop's own iteration count, ending it early). Now a compile-time
+  error, everywhere a new binding is introduced (`var`, `for`), against
+  everything already in scope, including the built-in function/constant
+  namespace (`expr.py`'s new `RESERVED_NAMES`, exported alongside the
+  existing `TIME_SHAPED_FUNCTIONS`). Sequential, non-overlapping `for`
+  loops may still reuse a name freely - this is about overlapping
+  scope, not the identifier.
+
 ### Added
 - Arrays (`[expr, expr, ...]`) and objects (`json { key: expr, ... }`)
   as first-class values - assignable to a `var`, nestable inside each
