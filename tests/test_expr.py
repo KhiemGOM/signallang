@@ -223,6 +223,30 @@ def test_shift_chains_with_value_methods():
     assert evaluate("square(5, 0, 100, 10).shift(1).scale(2).add(3)", {}) == pytest.approx(3.0)
 
 
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "square(5, 0, 100, 10).shift(1).scale(2)",
+        "square(5, 0, 100, 10).scale(2).shift(1)",  # shift written AFTER scale
+        "square(5, 0, 100, 10).add(0).shift(1).scale(2)",  # shift sandwiched
+    ],
+)
+def test_shift_is_order_independent_within_the_chain(expr):
+    # regression: .shift(...) rewrites the CALL's argument, which must
+    # happen before the call fires no matter where in the postfix chain
+    # it's textually written - a naive left-to-right pass would apply
+    # .scale(2) to the call's un-shifted result first, then have nothing
+    # left to rewrite once it reached a trailing .shift(). All three
+    # forms here must produce the same value: square(4, 0, 100, 10) * 2.
+    assert evaluate(expr, {}) == pytest.approx(0.0)
+
+
+def test_multiple_shifts_accumulate_regardless_of_position():
+    a = evaluate("square(5, 0, 100, 10).add(1).shift(1).scale(2).shift(2).add(3)", {})
+    b = evaluate("square(5, 0, 100, 10).shift(3).add(1).scale(2).add(3)", {})
+    assert a == pytest.approx(b)
+
+
 def test_shift_requires_at_least_one_argument():
     with pytest.raises(ExprError):
         evaluate("random().shift(1)", {})
@@ -233,9 +257,9 @@ def test_shift_requires_a_number_offset():
         evaluate('square(5, 0, 100, 10).shift("a")', {})
 
 
-def test_shift_only_recognized_directly_after_a_call():
-    # a bare variable/atom isn't a call - '.shift' has nothing to attach
-    # to, so it's just unconsumed trailing input.
+def test_shift_only_recognized_within_a_call_postfix_chain():
+    # a bare variable/atom isn't a call, so it has no call-postfix chain
+    # for '.shift' to participate in - just unconsumed trailing input.
     with pytest.raises(ExprError):
         evaluate("t.shift(1)", {"t": 5.0})
 

@@ -268,25 +268,35 @@ other function's `!` passes its arguments exactly as written.
 name(args).shift(offset)
 ```
 
-Recognized directly after a function call's closing `)`. Subtracts
-`offset` from the call's first argument, then makes the call with the
-modified argument list; the result is otherwise ordinary — evaluated
-once if the call is not wrapped in `live`/`!`, once per tick if it is.
+Subtracts `offset` from the call's first argument, then makes the call
+with the modified argument list; the result is otherwise ordinary —
+evaluated once if the call is not wrapped in `live`/`!`, once per tick if
+it is.
 
 ```
 square!(0, 1, 10s).shift(3s)    # equivalent to: live { return square(_t - 3s, 0, 1, 10s); };
 square(5, 0, 1, 10s).shift(3s)  # equivalent to: square(5 - 3s, 0, 1, 10s), evaluated once
 ```
 
-Requires the call to take at least one argument; requires the first
-argument and `offset` to both be numbers. A value below the underlying
-function's normal domain (a negative elapsed time) is passed through
-unmodified — `square`/`triangle`/`sawtooth` use `%`, which is defined for
-negative input; `linear` extrapolates below `a` rather than clamping to
-it. `.shift(...)` following anything other than a function call (a bare
-variable, a parenthesized expression) is a syntax error. `.shift(...)`
-composes with `.scale(...)`/`.add(...)`/`.bias(...)`, which apply to the
-call's result: `square!(0, 1, 10s).shift(3s).scale(2)`.
+Recognized anywhere within the postfix chain that follows a function
+call's closing `)`, not only as the first operator in that chain — the
+chain is scanned as a whole before the call is made, so `.shift(offset)`
+always applies to the call's argument regardless of its position
+relative to `.scale(...)`/`.add(...)`/`.bias(...)`, which apply to the
+call's result instead:
+
+```
+square(5, 0, 1, 10s).shift(3s).scale(2)   # == square(5, 0, 1, 10s).scale(2).shift(3s)
+```
+
+Multiple `.shift(...)` calls in one chain accumulate. Requires the call
+to take at least one argument; requires the first argument and `offset`
+to both be numbers. A value below the underlying function's normal
+domain (a negative elapsed time) is passed through unmodified —
+`square`/`triangle`/`sawtooth` use `%`, which is defined for negative
+input; `linear` extrapolates below `a` rather than clamping to it.
+`.shift(...)` following anything other than a function call (a bare
+variable, a parenthesized expression) is a syntax error.
 
 ```
 var mt = timer();               # an explicit named timer

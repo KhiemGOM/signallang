@@ -17,12 +17,17 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (add - two names, one operation), general operators on any numeric
   value, chainable with each other and with `.s`/`.m`/`.ms` in any order:
   `_t.s.scale(2).add(1)`.
-- `.shift(offset)`, recognized directly after any function call's closing
-  `)`: subtracts `offset` from the call's first argument before the call
-  is made, then the call proceeds normally (once, or once per tick if
-  wrapped in `live`/`!`, decided independently). Works on both bare and
-  bang calls: `square(5, 0, 1, 10s).shift(3s)` and `square!(0, 1,
-  10s).shift(3s)`.
+- `.shift(offset)`, recognized anywhere within the postfix chain that
+  follows a function call's closing `)`: subtracts `offset` from the
+  call's first argument before the call is made, then the call proceeds
+  normally (once, or once per tick if wrapped in `live`/`!`, decided
+  independently). Position-independent relative to `.scale`/`.add`/
+  `.bias` in the same chain - `f(...).shift(k).scale(2)` and
+  `f(...).scale(2).shift(k)` are equivalent, and multiple `.shift(...)`
+  calls accumulate - since the whole chain is scanned before the call is
+  made rather than applied left to right as it's encountered. Works on
+  both bare and bang calls: `square(5, 0, 1, 10s).shift(3s)` and
+  `square!(0, 1, 10s).shift(3s)`.
 - `name!(args)` - live-call sugar for any function, as the whole
   assignment right-hand side: `sin!(t)` desugars to `live { return
   sin(t); };`. For the fixed set of time-shaped builtins (`linear`,

@@ -322,42 +322,89 @@ class _Parser:
             return suffix
         return None
 
-    def _maybe_apply_shift(self, name: str, args: list) -> list:
-        """`.shift(offset)` - recognized directly after a function call's
-        closing ')', before the call is made. Rewrites the call's first
-        argument by subtracting offset; the (possibly shifted) call then
-        proceeds exactly as any other call would - static or live is
-        decided independently, by whatever wraps this expression (`!` or
-        `live`), never by shift itself. Unlike the operators in
-        _postfix(), this can't be a plain postfix on a result: shift has
-        to change an argument before the call happens, and by the time
-        _postfix() runs the call has already returned a value with no
-        arguments left to rewrite."""
-        save = self.pos
-        self._skip_ws()
-        if self.text[self.pos : self.pos + 1] != ".":
+    def _consume_call_postfix_chain(self, name: str, args: list) -> tuple:
+        """Scans the ENTIRE postfix chain immediately following a function
+        call's closing ')', in one pass, before the call is made.
+
+        This can't be done as an ordinary left-to-right _postfix() pass
+        after the fact: .shift(offset) rewrites the call's own first
+        argument, and it can appear anywhere in the chain - even after a
+        .scale(...)/.add(...) that's meant to apply to the RESULT. By the
+        time a left-to-right pass reached a trailing .shift(), the call
+        would already have happened with the un-shifted argument, too
+        late to fix. So every .shift(offset) found here, wherever it's
+        written, is applied to args[0] immediately (before any call
+        happens); every other recognized postfix (.scale/.add/.bias/
+        .s/.m/.ms) is deferred instead, and replayed - in its own
+        original relative order - on the call's result afterward, via
+        _apply_pending_postfix(). Multiple .shift()s chain: each
+        subtracts from whatever args[0] currently holds.
+
+        Returns (args, pending) - args mutated in place with every shift
+        applied, pending a list of (kind, payload) to replay on the
+        result."""
+        pending: list[tuple[str, Value]] = []
+        while True:
+            save = self.pos
+            self._skip_ws()
+            if self.pos >= len(self.text) or self.text[self.pos] != ".":
+                self.pos = save
+                break
+            after_dot = self.pos + 1
+            unit = self._match_time_unit(after_dot)
+            if unit is not None:
+                self.pos = after_dot + len(unit)
+                pending.append(("unit", unit))
+                continue
+            name_end = after_dot
+            while name_end < len(self.text) and (self.text[name_end].isalnum() or self.text[name_end] == "_"):
+                name_end += 1
+            word = self.text[after_dot:name_end]
+            if not (name_end < len(self.text) and self.text[name_end] == "("):
+                self.pos = save
+                break
+            if word == "shift":
+                if not args:
+                    raise ExprError(f"'.shift(...)' requires '{name}' to take at least one argument")
+                if isinstance(args[0], str):
+                    raise ExprError(f"'.shift(...)' is not supported - '{name}''s first argument is a string")
+                self.pos = name_end + 1
+                offset = self._or()
+                if isinstance(offset, str):
+                    raise ExprError("'.shift(...)' requires a number argument, got a string")
+                if self._peek() != ")":
+                    raise ExprError("expected ')'")
+                self.pos += 1
+                args[0] = args[0] - offset
+                continue
+            if word in _VALUE_METHODS:
+                self.pos = name_end + 1
+                arg = self._or()
+                if self._peek() != ")":
+                    raise ExprError("expected ')'")
+                self.pos += 1
+                pending.append((word, arg))
+                continue
             self.pos = save
-            return args
-        after_dot = self.pos + 1
-        if self.text[after_dot : after_dot + 5] != "shift":
-            self.pos = save
-            return args
-        after_name = after_dot + 5
-        if after_name >= len(self.text) or self.text[after_name] != "(":
-            self.pos = save
-            return args
-        if not args:
-            raise ExprError(f"'.shift(...)' requires '{name}' to take at least one argument")
-        if isinstance(args[0], str):
-            raise ExprError(f"'.shift(...)' is not supported - '{name}''s first argument is a string")
-        self.pos = after_name + 1
-        offset = self._or()
-        if isinstance(offset, str):
-            raise ExprError("'.shift(...)' requires a number argument, got a string")
-        if self._peek() != ")":
-            raise ExprError("expected ')'")
-        self.pos += 1
-        return [args[0] - offset, *args[1:]]
+            break
+        return args, pending
+
+    def _apply_pending_postfix(self, value: Value, pending: list) -> Value:
+        """Replays the deferred (non-shift) half of
+        _consume_call_postfix_chain's scan onto a call's result, in the
+        order those operators were originally written."""
+        for kind, payload in pending:
+            if kind == "unit":
+                if isinstance(value, str):
+                    raise ExprError(f"'.{payload}' is not supported for strings")
+                value = value / _TIME_UNITS[payload]
+            else:
+                if isinstance(value, str):
+                    raise ExprError(f"'.{kind}(...)' is not supported for strings")
+                if isinstance(payload, str):
+                    raise ExprError(f"'.{kind}(...)' requires a number argument, got a string")
+                value = _VALUE_METHODS[kind](value, payload)
+        return value
 
     def _postfix(self, value: Value) -> Value:
         """Chainable postfix operators, applied left to right:
@@ -466,14 +513,15 @@ class _Parser:
                 self.pos += 1
                 if name not in _FUNCTIONS:
                     raise ExprError(f"unknown function '{name}'")
-                args = self._maybe_apply_shift(name, args)
+                args, pending = self._consume_call_postfix_chain(name, args)
                 try:
                     result = _FUNCTIONS[name](*args)
                 except TypeError as exc:
                     raise ExprError(f"function '{name}' got an invalid argument type: {exc}") from None
                 except (ValueError, ZeroDivisionError) as exc:
                     raise ExprError(f"function '{name}' failed: {exc}") from None
-                return self._postfix(result if isinstance(result, str) else float(result))
+                result = result if isinstance(result, str) else float(result)
+                return self._apply_pending_postfix(result, pending)
             if name in self.variables:
                 value = self.variables[name]
                 return self._postfix(value if isinstance(value, str) else float(value))
