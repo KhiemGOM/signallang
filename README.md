@@ -38,9 +38,9 @@ its keep once you want any of these on top:
   `if`/`repeat`/`for`, multiple `send` phases in sequence — without hand
   rolling tick-counting and phase-transition bookkeeping every time.
 - **A script as *data***, not code — safe to accept from a config file, a
-  web form, or a REST body (this is exactly how the ROS2 dashboard uses
-  it: users type a script into a browser textarea and a backend compiles
-  and runs it, with no `eval` in sight).
+  web form, or a REST body. A UI for faking a topic publish, for example,
+  can let someone type a script straight into a textarea and have a
+  backend compile and run it, with no `eval` in sight.
 - **Decoupled from whoever owns the clock.** A script never sleeps or
   blocks; it's driven one logical tick at a time by whatever real timer
   the host already has (a `while` loop, an `rclpy.Timer`, an `asyncio`
@@ -125,10 +125,10 @@ Only names you declare with `var`, or that the language defines (`t`,
 `_t`, `i` inside a `for`), are ever in scope — there's no ambient global
 namespace to reach into.
 
-### Strings are real values, not just literals
+### Strings
 
-A string isn't a special assignment-only case — it flows through the same
-expression grammar as a number, with the operators that make sense for it:
+A string flows through the same expression grammar as a number, with the
+operators that make sense for it:
 
 ```
 var frame = "map";
@@ -143,10 +143,10 @@ if frame and true { ... }           # truthy iff non-empty, like Python
 
 `==`/`!=` work between any two values — a string is simply never equal to
 a number, no error, same as Python's own `1 == "1"`. Ordering (`< <= >
->=`) is lexicographic and requires both sides to be strings; mixing a
-string with a number anywhere arithmetic or ordering is expected (`- * /
-%`, unary `-`, `< <= > >=`, the `.s`/`.m`/`.ms` unit view) is a compile-
-or eval-time `ExprError`, not a silent coercion.
+>=`) is lexicographic and requires both sides to be strings. Mixing a
+string with a number anywhere else — arithmetic (`- * / %`, unary `-`),
+ordering, or the `.s`/`.m`/`.ms` unit view — is a compile- or eval-time
+`ExprError`, not a silent coercion.
 
 ### Control flow
 
@@ -280,10 +280,10 @@ a mobile-base test rig.
 
 ## Why I made this
 
-The ROS2 dashboard's fake-publisher feature needed to let someone type
-*"ramp this topic's temperature from 20 to 30 over 10 seconds, at 2Hz"*
-into a browser textarea and have a backend run it safely — no `eval`,
-nothing able to reach outside the value it's computing.
+A UI for faking a ROS2 topic publish needed to let someone type *"ramp
+this topic's temperature from 20 to 30 over 10 seconds, at 2Hz"* into a
+browser textarea and have a backend run it safely — no `eval`, nothing
+able to reach outside the value it's computing.
 
 Nothing off-the-shelf fit that shape. `Faker`/`Mimesis` generate one-shot
 fake *values*, not a *schedule* of them over time. JSON-Schema-driven
