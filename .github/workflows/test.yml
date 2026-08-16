@@ -19,6 +19,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[test]"
       - run: pytest -v
+      - name: type-check (mypy, single version - static analysis isn't a compatibility matrix)
+        if: matrix.python-version == '3.12'
+        run: |
+          pip install -e ".[dev]"
+          mypy src/signallang
       - name: verify zero ROS dependency
         run: |
           if grep -rlE '\brclpy\b|\bros2\b' src/signallang; then

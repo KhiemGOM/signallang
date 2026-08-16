@@ -1,12 +1,13 @@
 import math
 import random
+from typing import Callable
 
 
 def _terop(cond: float, then: float, otherwise: float) -> float:
     return then if cond else otherwise
 
 
-_FUNCTIONS = {
+_FUNCTIONS: dict[str, Callable[..., float]] = {
     "sin": math.sin,
     "cos": math.cos,
     "abs": abs,

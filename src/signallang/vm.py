@@ -116,8 +116,10 @@ class ScriptRun:
         if instr.dur_kind == "inf":
             return False
         if instr.dur_kind == "tick":
+            assert instr.dur_value is not None  # guaranteed by the compiler for dur_kind="tick"
             return self._send_ticks_done >= instr.dur_value
         if instr.dur_kind == "wall":
+            assert instr.dur_value is not None  # guaranteed by the compiler for dur_kind="wall"
             return (self.master_t - self._send_start_t) >= instr.dur_value - 1e-9
         raise ScriptError(f"internal: unknown dur_kind {instr.dur_kind!r}")
 
