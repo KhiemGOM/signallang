@@ -122,6 +122,43 @@ def test_send_value_sugar_array():
     assert len(prog.body[0].value.elements) == 3
 
 
+def test_send_hz_dur_and_value_are_order_independent():
+    # value first, last, or wedged between hz/dur, and hz/dur swapped
+    # between themselves, all parse to the same Send node.
+    forms = [
+        "send true hz 5 dur 4.5;",
+        "send hz 5 dur 4.5 true;",
+        "send hz 5 true dur 4.5;",
+        "send dur 4.5 hz 5 true;",
+        "send dur 4.5 true hz 5;",
+    ]
+    nodes = [parse(f).body[0] for f in forms]
+    for n in nodes:
+        assert n.hz == 5.0
+        assert n.dur_kind == "wall"
+        assert n.dur_value == 4.5
+        assert n.value.text == "true"
+
+
+def test_send_with_two_unambiguous_values_is_a_parse_error():
+    # two bare expression values with nothing to disambiguate them (no
+    # keyword, no closing bracket) isn't parse-time-catchable - the same
+    # "raw source span" trade-off as a missing `;` - but two values with
+    # their own unambiguous boundaries (arrays here) is a real, checkable
+    # "only one value per send" violation.
+    with pytest.raises(ScriptError):
+        parse("send [1, 2] [3, 4];")
+
+
+def test_send_value_first_stops_before_trailing_hz_keyword():
+    # the value-first form must not swallow the trailing `hz`/`dur` text
+    # into the value's own expression span.
+    prog = parse("send 1 + 2 hz 5;")
+    node = prog.body[0]
+    assert node.value.text == "1 + 2"
+    assert node.hz == 5.0
+
+
 def test_default_placeholder():
     prog = parse("header = default;")
     from patternlang.ast_nodes import Default

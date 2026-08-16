@@ -319,45 +319,111 @@ class Parser:
         return For(var=var, start=start_span, end=end, body=body)
 
     def _parse_send(self):
+        # hz/dur/value are all optional and fully order-independent - each
+        # loop iteration takes whichever of them comes next, so `send true
+        # hz 5 dur 4.5;`, `send hz 5 true dur 4.5;`, and `send hz 5 dur 4.5
+        # true;` all mean the same thing. A plain-expression value always
+        # stops at the next `hz`/`dur` keyword as well as `;`, so it never
+        # swallows a modifier that happens to follow it.
         self._advance_word("send")
-        self._skip_ws()
         hz = None
-        if self._looking_at_word("hz"):
-            self._advance_word("hz")
-            self._skip_ws()
-            if self._looking_at_word("inf"):
-                self._advance_word("inf")
-            else:
-                hz = self._parse_number()
-            self._skip_ws()
         dur_kind = "inf"
         dur_value = None
-        if self._looking_at_word("dur"):
-            self._advance_word("dur")
-            self._skip_ws()
-            if self._looking_at_word("inf"):
-                self._advance_word("inf")
-            else:
-                num = self._parse_number()
-                unit = self._match_unit_suffix()
-                if unit == "t":
-                    self.pos += 1
-                    dur_kind, dur_value = "tick", num
-                else:
-                    if unit is not None:
-                        self.pos += len(unit)
-                    mult = {"s": 1.0, "m": 60.0, "ms": 0.001, None: 1.0}[unit]
-                    dur_kind, dur_value = "wall", num * mult
-            self._skip_ws()
         value = None
-        if self._peek_char() not in (";", ""):
-            value = self._parse_value(";")
+        while True:
+            self._skip_ws()
+            if self._peek_char() in (";", ""):
+                break
+            if self._looking_at_word("hz"):
+                hz = self._parse_hz_modifier()
+                continue
+            if self._looking_at_word("dur"):
+                dur_kind, dur_value = self._parse_dur_modifier()
+                continue
+            if value is not None:
+                raise ScriptError("a `send` statement can only have one value", self.pos)
+            value = self._parse_value(";", stop_at_send_modifiers=True)
         self._expect_char(";")
         return Send(hz=hz, dur_kind=dur_kind, dur_value=dur_value, value=value)
 
+    def _parse_hz_modifier(self) -> float | None:
+        self._advance_word("hz")
+        self._skip_ws()
+        if self._looking_at_word("inf"):
+            self._advance_word("inf")
+            return None
+        return self._parse_number()
+
+    def _parse_dur_modifier(self) -> tuple:
+        self._advance_word("dur")
+        self._skip_ws()
+        if self._looking_at_word("inf"):
+            self._advance_word("inf")
+            return "inf", None
+        num = self._parse_number()
+        unit = self._match_unit_suffix()
+        if unit == "t":
+            self.pos += 1
+            return "tick", num
+        if unit is not None:
+            self.pos += len(unit)
+        mult = {"s": 1.0, "m": 60.0, "ms": 0.001, None: 1.0}[unit]
+        return "wall", num * mult
+
+    def _word_at(self, pos: int, word: str) -> bool:
+        end = pos + len(word)
+        if self.text[pos:end] != word:
+            return False
+        return end >= len(self.text) or not (self.text[end].isalnum() or self.text[end] == "_")
+
+    def _scan_send_leading_value_span(self) -> ExprSpan:
+        """Like _scan_expr_span(";"), but also stops right before a
+        subsequent `hz`/`dur` modifier keyword - needed for the
+        value-first `send VALUE hz H dur D;` form, where a plain
+        expression value isn't necessarily followed straight by `;`."""
+        self._skip_ws()
+        start = self.pos
+        text = self.text
+        depth = 0
+        in_string = False
+        i = start
+        while i < len(text):
+            c = text[i]
+            if in_string:
+                if c == '"':
+                    in_string = False
+                i += 1
+                continue
+            if c == '"':
+                in_string = True
+                i += 1
+                continue
+            if c in "([":
+                depth += 1
+            elif depth == 0 and c == ";":
+                break
+            elif c in ")]":
+                if depth == 0:
+                    raise ScriptError(f"unmatched '{c}'", i)
+                depth -= 1
+            elif depth == 0 and c.isspace():
+                j = i
+                while j < len(text) and text[j].isspace():
+                    j += 1
+                if self._word_at(j, "hz") or self._word_at(j, "dur"):
+                    break
+            i += 1
+        if i >= len(text):
+            raise ScriptError("unexpected end of input while scanning a send value", start)
+        value_text = text[start:i].strip()
+        if not value_text:
+            raise ScriptError("expected a value", start)
+        self.pos = i
+        return ExprSpan(value_text)
+
     # -- values (assignment RHS / array elements / send's bare value) ---
 
-    def _parse_value(self, stop_chars: str):
+    def _parse_value(self, stop_chars: str, stop_at_send_modifiers: bool = False):
         self._skip_ws()
         if self._looking_at_word("default"):
             self._advance_word("default")
@@ -371,6 +437,8 @@ class Parser:
             return self._parse_live_block()
         if self._looking_at_word("linear"):
             return self._parse_linear_sugar()
+        if stop_at_send_modifiers:
+            return self._scan_send_leading_value_span()
         span_end = span.scan_span(self.text, self.pos, stop_chars)
         text = self.text[self.pos : span_end].strip()
         if not text:
