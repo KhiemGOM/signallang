@@ -1,15 +1,15 @@
-# patternlang
+# signallang
 
-A small, safe expression language for describing time-varying synthetic
-data — no `eval`/`exec`, no user-defined functions, nothing that reaches
-outside the value it's computing.
+A small, safe scripting language for publishing synthetic signals —
+structured data that changes over time — no `eval`/`exec`, no
+user-defined functions, nothing that reaches outside the value it's
+computing.
 
 It was designed to drive a ROS2 "fake publisher" (make a topic emit
 synthetic sensor/status data for testing a subscriber in isolation), but
-nothing in the language itself is ROS-specific — it's just a restricted
-arithmetic and boolean expression evaluator, usable anywhere you want a
-non-technical, un-Google-able way to describe "this value, but changing
-over time."
+nothing in the language itself is ROS-specific — it's a general way to
+describe "this value, but changing over time, at this rate, for this
+long," usable anywhere that pattern shows up.
 
 ## What's here
 
@@ -22,7 +22,7 @@ in A..B`, `live { }` blocks with an automatic per-binding `_t`,
 positional array fill, and the `default` placeholder.
 
 ```python
-from patternlang import evaluate, compile_script
+from signallang import evaluate, compile_script
 
 evaluate("sin(t)", {"t": 1.57})
 # 0.9999996829318346
@@ -43,11 +43,11 @@ hits the next `Send` tick and returns immediately — no thread, no clock,
 no `sleep()` anywhere in `compiler.py`/`vm.py`. Real-time pacing between
 `step()` calls is the caller's job; `run_realtime()` is a small opt-in
 convenience driver (the only place in the package that imports `time`) for
-anyone using patternlang outside a framework that already owns its own
+anyone using signallang outside a framework that already owns its own
 timer loop (like ROS's `rclpy.Timer` will in a future adapter).
 
 ```python
-from patternlang import run_realtime
+from signallang import run_realtime
 
 run_realtime(compiled, on_send=lambda msg: print(msg))  # blocks, runs in real time
 ```

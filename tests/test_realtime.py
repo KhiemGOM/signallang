@@ -1,10 +1,10 @@
-from patternlang import compile_script
-from patternlang.realtime import run_realtime
+from signallang import compile_script
+from signallang.realtime import run_realtime
 
 
 def test_run_realtime_calls_on_send_once_per_tick_in_order(monkeypatch):
-    monkeypatch.setattr("patternlang.realtime.time.sleep", lambda _: None)
-    monkeypatch.setattr("patternlang.realtime.time.monotonic", lambda: 0.0)
+    monkeypatch.setattr("signallang.realtime.time.sleep", lambda _: None)
+    monkeypatch.setattr("signallang.realtime.time.monotonic", lambda: 0.0)
 
     compiled = compile_script("for i in 0..5 {\n data = i;\n send hz 1 dur 1t;\n}")
     received = []
@@ -14,8 +14,8 @@ def test_run_realtime_calls_on_send_once_per_tick_in_order(monkeypatch):
 
 
 def test_run_realtime_stops_when_step_returns_none(monkeypatch):
-    monkeypatch.setattr("patternlang.realtime.time.sleep", lambda _: None)
-    monkeypatch.setattr("patternlang.realtime.time.monotonic", lambda: 0.0)
+    monkeypatch.setattr("signallang.realtime.time.sleep", lambda _: None)
+    monkeypatch.setattr("signallang.realtime.time.monotonic", lambda: 0.0)
 
     compiled = compile_script("send hz 10 dur 3t;")
     calls = []

@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from patternlang import ExprError, evaluate
+from signallang import ExprError, evaluate
 
 
 # -- correctness -------------------------------------------------------

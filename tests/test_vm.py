@@ -1,6 +1,6 @@
 import pytest
 
-from patternlang import DictSchemaProvider, ScriptError, compile_script
+from signallang import DictSchemaProvider, ScriptError, compile_script
 
 
 def run_all(src, limit=10_000, schema_provider=None):

@@ -3,7 +3,7 @@ Pattern Language artifact, against hand-computed expected values."""
 
 import pytest
 
-from patternlang import compile_script
+from signallang import compile_script
 
 
 def collect(src, n):

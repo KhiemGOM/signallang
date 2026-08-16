@@ -1,5 +1,5 @@
 """The one opt-in convenience driver, and the only module in this package
-that imports `time`. Real-time pacing was never patternlang's job - `step()`
+that imports `time`. Real-time pacing was never signallang's job - `step()`
 returns instantly with no waiting - but this loop is genuinely useful to
 anyone using the package standalone, so it ships as a small, swappable
 wrapper on top of the pure core rather than being required. A Phase 3 ROS

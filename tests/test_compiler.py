@@ -1,8 +1,8 @@
 import pytest
 
-from patternlang.compiler import Jump, JumpIfFalse, SendInstr, SetVar, compile_program
-from patternlang.errors import ScriptError
-from patternlang.parser import parse
+from signallang.compiler import Jump, JumpIfFalse, SendInstr, SetVar, compile_program
+from signallang.errors import ScriptError
+from signallang.parser import parse
 
 
 def test_if_else_lowers_to_jumps():

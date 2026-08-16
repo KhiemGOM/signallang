@@ -1,8 +1,8 @@
 import pytest
 
-from patternlang.ast_nodes import Assign, ExprSpan, For, If, LiveBlock, Repeat, Send, StringLit, VarDecl
-from patternlang.errors import ScriptError
-from patternlang.parser import parse
+from signallang.ast_nodes import Assign, ExprSpan, For, If, LiveBlock, Repeat, Send, StringLit, VarDecl
+from signallang.errors import ScriptError
+from signallang.parser import parse
 
 
 def test_static_assignment():
@@ -161,7 +161,7 @@ def test_send_value_first_stops_before_trailing_hz_keyword():
 
 def test_default_placeholder():
     prog = parse("header = default;")
-    from patternlang.ast_nodes import Default
+    from signallang.ast_nodes import Default
 
     assert prog.body[0].value == Default()
 
@@ -169,7 +169,7 @@ def test_default_placeholder():
 def test_default_nested_in_array():
     prog = parse("send [default, 20.0, 0.1];")
     elems = prog.body[0].value.elements
-    from patternlang.ast_nodes import Default
+    from signallang.ast_nodes import Default
 
     assert elems[0] == Default()
     assert elems[1].text == "20.0"
@@ -223,7 +223,7 @@ def test_comments_are_stripped():
 
 def test_timer_and_latching_timer_decl():
     prog = parse("var a = timer();\nvar b = latching_timer();")
-    from patternlang.ast_nodes import TimerDecl
+    from signallang.ast_nodes import TimerDecl
 
     assert prog.body[0] == TimerDecl(name="a", kind="eager")
     assert prog.body[1] == TimerDecl(name="b", kind="latching")
@@ -231,7 +231,7 @@ def test_timer_and_latching_timer_decl():
 
 def test_timer_reset_statement():
     prog = parse("var a = timer();\na.reset();")
-    from patternlang.ast_nodes import TimerReset
+    from signallang.ast_nodes import TimerReset
 
     assert prog.body[1] == TimerReset(name="a")
 

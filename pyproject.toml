@@ -3,9 +3,9 @@ requires = ["setuptools>=60"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "patternlang"
+name = "signallang"
 version = "0.1.0"
-description = "A small, safe scripting language for describing time-varying synthetic structured data - no eval/exec, no user-defined functions."
+description = "A small, safe scripting language for publishing synthetic signals - time-varying structured data, no eval/exec, no user-defined functions."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
