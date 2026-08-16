@@ -5,6 +5,8 @@ atomic instruction (see the design plan for why decomposing it further
 wouldn't have changed anything at the layer that actually matters).
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 from .ast_nodes import (

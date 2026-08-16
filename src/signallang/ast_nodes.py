@@ -4,6 +4,8 @@ as verbatim source-text spans (ExprSpan), sliced and handed to
 expr.evaluate() only at VM render time.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 

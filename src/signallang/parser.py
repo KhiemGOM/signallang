@@ -5,6 +5,8 @@ runtime is still a parse-time error), matching the old script.py prototype's
 own precedent.
 """
 
+from __future__ import annotations
+
 from . import span
 from .ast_nodes import (
     ArrayLit,

@@ -6,6 +6,8 @@ entirely the caller's job (see realtime.py for the one opt-in convenience
 driver, or a host application's own timer/event-loop callback).
 """
 
+from __future__ import annotations
+
 import copy
 from dataclasses import dataclass
 

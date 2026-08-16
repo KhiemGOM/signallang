@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+
 class ScriptError(ValueError):
     """A statement-grammar error - unmatched braces, missing `;`, an
     unrecognized construct, a length mismatch in positional fill, etc.
