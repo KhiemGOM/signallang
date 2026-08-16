@@ -3,18 +3,17 @@
 [![PyPI](https://img.shields.io/pypi/v/signallang)](https://pypi.org/project/signallang/)
 [![tests](https://github.com/KhiemGOM/signallang/actions/workflows/test.yml/badge.svg)](https://github.com/KhiemGOM/signallang/actions/workflows/test.yml)
 
-A small, safe scripting language for **publishing synthetic signals** —
-structured data that changes over time, on a schedule you control. No
-`eval`/`exec`, no user-defined functions, no way to reach a name,
-attribute, or module that wasn't explicitly handed in.
+A scripting language for publishing synthetic signals: structured data
+that changes over time, on a defined schedule. No `eval`/`exec`, no
+user-defined functions, no name, attribute, or module accessible beyond
+what is explicitly provided as input.
 
-It was designed to drive a ROS2 "fake publisher" (make a topic emit
-synthetic sensor/status data so you can test a subscriber in isolation,
-without real hardware), but nothing in the language itself is
-ROS-specific. It's a general way to describe *"this value, but ramping
-from 20 to 30 over 10 seconds, sent at 2Hz, for 10 seconds"* — useful
-anywhere that shape shows up: mocking a sensor feed, driving a UI demo,
-load-testing a message consumer, feeding a simulator.
+The language is not tied to ROS2 or any other framework. It describes a
+value that changes over time on a defined schedule — e.g. a value ramping
+from 20 to 30 over 10 seconds, sent at 2Hz — independent of the system
+consuming that value. Applicable use cases include mocking a sensor feed,
+driving a UI demo, load-testing a message consumer, and feeding a
+simulator.
 
 ```python
 from signallang import compile_script
@@ -28,23 +27,23 @@ run.step()   # StepResult(value={'temperature': 20.0}, hz=2.0)
 run.step()   # StepResult(value={'temperature': 20.5}, hz=2.0)
 ```
 
-## Why not just a Python loop?
+## Comparison to a manually written loop
 
-You can write the loop by hand — `while True: msg.temp += 0.5; pub.publish(msg); sleep(0.5)`
-— and for a one-off script that's often the right call. signallang earns
-its keep once you want any of these on top:
+A single time-varying value can be produced with a manually written loop
+(`while True: msg.temp += 0.5; pub.publish(msg); sleep(0.5)`). signallang
+provides three properties a manual loop does not:
 
-- **Ramps, holds, and repeats composed declaratively** — `linear!(...)`,
-  `if`/`repeat`/`for`, multiple `send` phases in sequence — without hand
-  rolling tick-counting and phase-transition bookkeeping every time.
-- **A script as *data***, not code — safe to accept from a config file, a
-  web form, or a REST body. A UI for faking a topic publish, for example,
-  can let someone type a script straight into a textarea and have a
-  backend compile and run it, with no `eval` in sight.
-- **Decoupled from whoever owns the clock.** A script never sleeps or
-  blocks; it's driven one logical tick at a time by whatever real timer
-  the host already has (a `while` loop, an `rclpy.Timer`, an `asyncio`
-  event loop) — see [Two layers](#two-layers-compile-time-vs-real-time) below.
+- **Declarative composition of ramps, holds, and repeats.** `linear!(...)`,
+  `if`/`repeat`/`for`, and multiple `send` phases in sequence are
+  expressed without manually tracking tick counts and phase transitions.
+- **Scripts as data, not code.** A script is safe to accept from a config
+  file, a web form, or a REST body without `eval`. For example, a UI for
+  faking a topic publish can accept a script typed into a textarea and
+  have a backend compile and run it directly.
+- **No dependency on a particular clock.** A script does not sleep or
+  block; it is driven one logical tick at a time by whatever real timer
+  the host provides (a `while` loop, an `rclpy.Timer`, an `asyncio` event
+  loop — see [Two layers](#two-layers-compile-time-vs-real-time)).
 
 ## Install
 
@@ -59,14 +58,14 @@ pip install -e ".[test]" && pytest
 
 ## Two layers: compile time vs. real time
 
-A script compiles to a small, flat instruction tape (`SetVar` / `SetField`
-/ `Send` / `Jump` / `JumpIfFalse` / `CreateTimer` / `ResetTimer`) and runs
-as a stepped VM. `ScriptRun.step()` executes instructions until it hits
-the next `Send` and returns immediately — **no thread, no clock, no
-`sleep()` anywhere in `compiler.py` or `vm.py`.** Time inside the VM is
-counted, not waited for.
+A script compiles to a flat instruction tape (`SetVar` / `SetField` /
+`Send` / `Jump` / `JumpIfFalse` / `CreateTimer` / `ResetTimer`) executed
+by a stepped VM. `ScriptRun.step()` executes instructions until it
+reaches the next `Send` and returns. `compiler.py` and `vm.py` contain no
+thread, no clock, and no call to `sleep()`; time within the VM is counted
+as a value, not measured by waiting.
 
-Pacing those `step()` calls in real time is the caller's job:
+Pacing `step()` calls in real time is the responsibility of the caller:
 
 ```python
 run = compiled.new_run()
@@ -75,8 +74,8 @@ while (result := run.step()) is not None:
     sleep(1.0 / result.hz)
 ```
 
-`run_realtime()` ships a minimal version of exactly that loop as an
-opt-in convenience — the *only* place in the package that imports `time`:
+`run_realtime()` provides this loop as an optional convenience function.
+It is the only module in the package that imports `time`:
 
 ```python
 from signallang import run_realtime
@@ -84,14 +83,13 @@ from signallang import run_realtime
 run_realtime(compiled, on_send=lambda msg: print(msg))  # blocks, real time
 ```
 
-Anything that already owns a timer loop — ROS's `rclpy.Timer`, a
-game/simulator tick, an `asyncio` task — skips `run_realtime()` and calls
-`step()` directly from its own loop instead. [`examples/`](examples/) has
-two small, non-ROS proofs of this: [`stdout_signal.py`](examples/stdout_signal.py)
-pipes NDJSON to stdout (consumable by any language, C++ included), and
-[`websocket_signal.py`](examples/websocket_signal.py) broadcasts to
-WebSocket clients from an `asyncio` event loop instead of a blocking
-thread.
+A caller that already owns a timer loop — an `rclpy.Timer`, a
+game/simulator tick, an `asyncio` task — calls `step()` directly from
+that loop instead of using `run_realtime()`. [`examples/`](examples/)
+contains two such integrations with no ROS dependency:
+[`stdout_signal.py`](examples/stdout_signal.py) writes NDJSON to stdout,
+and [`websocket_signal.py`](examples/websocket_signal.py) broadcasts to
+WebSocket clients from an `asyncio` event loop.
 
 ## Language tour
 
@@ -115,15 +113,15 @@ Loosest to tightest binding: `or` → `and` → `not` → comparison
 |---|---|
 | Numbers | `20`, `0.5`, `-3.2` |
 | Constants | `true`, `false`, `pi`, `e` |
-| Variables | `t`, `i`, `_t`, or anything else in scope |
-| Functions | `sin cos abs sqrt floor ceil min max random` |
-| `terop(cond, then, else)` | inline choice, both branches evaluate eagerly |
-| Duration literals | `10s`, `3m`, `500ms`, `10t` (ticks) — normalized to seconds at parse time |
-| `.s` / `.m` / `.ms` | postfix unit view — `_t.s` reads a timer back out in seconds |
+| Variables | `t`, `i`, `_t`, or any name declared with `var` |
+| Functions | `sin cos abs sqrt floor ceil min max random noise` (see also [Signal-shape builtins](#signal-shape-builtins)) |
+| `terop(cond, then, else)` | conditional expression; both branches are evaluated |
+| Duration literals | `10s`, `3m`, `500ms`, `10t` (ticks); normalized to seconds at parse time |
+| `.s` / `.m` / `.ms` | postfix unit view — `_t.s` reads a timer's value in seconds |
 
-Only names you declare with `var`, or that the language defines (`t`,
-`_t`, `i` inside a `for`), are ever in scope — there's no ambient global
-namespace to reach into.
+Only names declared with `var`, plus the language-defined names `t`,
+`_t`, and (inside a `for` loop) `i`, are in scope. There is no ambient
+global namespace.
 
 ### Strings
 
@@ -165,12 +163,12 @@ for i in 0..7 { data = i * 30; send hz 1 dur 1t; }   # bounded range, i in scope
 for i in 0..inf { data = i; send hz 1 dur 1t; }      # unbounded — no eager unrolling
 ```
 
-`if`/`repeat`/`for` lower to real jump-based control flow at compile
-time, so a `repeat`/`for` body can contain any number of `send`s, and an
-unbounded loop costs nothing extra per `step()` — it's just an ordinary
-instruction pointer moving through the tape, the same as a bounded one.
+`if`, `repeat`, and `for` compile to jump-based control flow. A `repeat`
+or `for` body may contain any number of `send` statements. An unbounded
+loop has the same per-`step()` cost as a bounded one; both advance an
+instruction pointer through the tape.
 
-### `send` — the one instruction that spends time
+### `send`
 
 ```
 send;                          # send the current msg once, hz defaults to 50 (MAX_HZ), dur inf
@@ -219,11 +217,11 @@ field = name!(args);
 Recognized only when `name!(args)` is the entire right-hand side.
 Equivalent to `field = live { return name(args); };`. For the fixed set
 of time-shaped builtins — `linear`, `square`, `triangle`, `sawtooth`,
-`damped_wave` — the elapsed-time argument is also inserted as the first
-argument: `linear!(20, 30, 10s)` is equivalent to `live { return
-linear(_t, 20, 30, 10s); };`. For every other function, arguments are
-passed exactly as written: `sin!(t)` is equivalent to `live { return
-sin(t); };`.
+`damped_wave`, `sinusoidal_wave` — the elapsed-time argument is also
+inserted as the first argument: `linear!(20, 30, 10s)` is equivalent to
+`live { return linear(_t, 20, 30, 10s); };`. For every other function,
+arguments are passed exactly as written: `sin!(t)` is equivalent to
+`live { return sin(t); };`.
 
 A bang call is not recognized when embedded inside a larger expression;
 `data = 1 + sin!(t);` is a syntax error at `!`. Use the `live` shorthand
@@ -239,24 +237,24 @@ restarts from zero on every iteration.
 
 ### Signal-shape builtins
 
-Plain, pure functions of an explicit elapsed-time argument — nothing
-about them is implicitly wired to the VM's clock, so they behave exactly
-like `sin`/`cos` do: call them bare for a frozen one-shot value, or with
-`!` for a value that moves every tick.
+Pure functions of an explicit elapsed-time argument, with the same
+evaluation semantics as `sin`/`cos`: a bare call is evaluated once; `!`
+evaluates the call once per tick.
 
 | | |
 |---|---|
 | `linear(t, a, b, dur)` | ramps a → b over dur seconds, then holds at b |
 | `square(t, low, high, period)` | 50% duty cycle: low for the first half of each period, high for the second |
 | `triangle(t, low, high, period)` | ramps low → high over the first half, high → low over the second |
-| `sawtooth(t, low, high, period)` | ramps low → high over the whole period, then snaps back to low |
-| `damped_wave(t, amplitude, decay, period)` | a decaying sinusoid — the natural response shape of an underdamped 2nd-order system (an RLC circuit's own step response): `amplitude * e^(-decay·t) * sin(2π·t/period)` |
-| `noise(mean, stddev)` | one Gaussian-distributed random draw (no time argument — it's not time-shaped, just non-deterministic) |
+| `sawtooth(t, low, high, period)` | ramps low → high over the whole period, then resets to low |
+| `sinusoidal_wave(t, amplitude, period)` | `amplitude * sin(2π·t/period)` |
+| `damped_wave(t, amplitude, decay, period)` | `amplitude * e^(-decay·t) * sin(2π·t/period)` — a decaying sinusoid; the natural response of an underdamped 2nd-order system such as an RLC circuit |
+| `noise(mean, stddev)` | one Gaussian-distributed random draw; not time-shaped, no time argument |
 
-`linear`/`square`/`triangle`/`sawtooth`/`damped_wave` are exactly the set
-whose `!` sugar also injects `_t` as that first argument for you —
-`square!(0, 1, 2s)`, not `square!(_t, 0, 1, 2s)`. Every other function's
-`!` wraps its arguments exactly as written.
+`linear`, `square`, `triangle`, `sawtooth`, `damped_wave`, and
+`sinusoidal_wave` are the set whose `!` sugar also inserts `_t` as the
+first argument: `square!(0, 1, 2s)`, not `square!(_t, 0, 1, 2s)`. Every
+other function's `!` passes its arguments exactly as written.
 
 ```
 var mt = timer();               # an explicit named timer
@@ -282,41 +280,41 @@ repeat {
 }
 ```
 
-Ramp `linear.x` from 0 to 1 over 3s, hold at 1 for 5s, ramp back down to
-0 over 3s, hold at 0 for 2s, repeat forever — a 13-second accelerate/
-cruise/decelerate/stop cycle, e.g. for faking a `geometry_msgs/Twist` on
-a mobile-base test rig.
+This script ramps `linear.x` from 0 to 1 over 3 seconds, holds at 1 for 5
+seconds, ramps back to 0 over 3 seconds, holds at 0 for 2 seconds, and
+repeats. The result is a 13-second accelerate/cruise/decelerate/stop
+cycle, applicable to faking a `geometry_msgs/Twist` value on a
+mobile-base test rig.
 
 ## Safety model
 
-- No `eval`/`exec`, no attribute access, no imports, no user-defined
-  functions — every callable is one of nine fixed math functions.
-- The only names in scope are `t`/`i`/`_t`, whatever `var` declares, and
-  fields on the message being built. There's no way to reference
-  anything outside the value currently being computed.
-- `hz` is clamped to a 50Hz ceiling at compile time; `hz <= 0` is a
-  compile error, not a runtime crash.
-- Malformed scripts (bad field names, wrong array shape, mismatched
-  positional fill) are supposed to fail at `compile_script()` /
-  the first `step()` — fail fast, before anything is ever sent.
+- No `eval`, no `exec`, no attribute access, no imports, no
+  user-defined functions. Every callable is drawn from a fixed set of
+  functions defined by the language.
+- The only names in scope are `t`, `i`, `_t`, names declared with `var`,
+  and fields of the message being built. No name outside the value
+  currently being computed is accessible.
+- `hz` is clamped to a 50Hz ceiling at compile time. `hz <= 0` is a
+  compile error, not a runtime exception.
+- Malformed scripts (invalid field names, incorrect array shape,
+  mismatched positional fill) fail at `compile_script()` or the first
+  `step()`, before any value is sent.
 
-## Why I made this
+## Rationale
 
-A UI for faking a ROS2 topic publish needed to let someone type *"ramp
-this topic's temperature from 20 to 30 over 10 seconds, at 2Hz"* into a
-browser textarea and have a backend run it safely — no `eval`, nothing
-able to reach outside the value it's computing.
-
-Nothing off-the-shelf fit that shape. `Faker`/`Mimesis` generate one-shot
-fake *values*, not a *schedule* of them over time. JSON-Schema-driven
-fuzzers produce structurally valid data but nothing intentionally
-time-varying. General sandboxed interpreters (`RestrictedPython`,
-`asteval`, embedded Lua) are safe but have no built-in notion of ticks,
-ramps, or `send hz/dur` — reaching for one would still mean building this
-exact scheduling layer on top by hand. So this became its own small
-thing: an expression sandbox plus six statement primitives, compiled to a
-flat instruction tape and driven one tick at a time by whoever owns the
-real clock.
+A UI for faking a ROS2 topic publish requires accepting a script from
+untrusted input — e.g. a browser textarea — and executing it safely,
+without `eval` and without exposing any value outside the one being
+computed. `Faker` and `Mimesis` generate individual fake values, not a
+schedule of values over time. JSON-Schema-driven fuzzers produce
+structurally valid data without an intentional time-varying pattern.
+General sandboxed interpreters (`RestrictedPython`, `asteval`, embedded
+Lua) are safe but have no built-in notion of ticks, ramps, or `send
+hz/dur`; using one requires building this scheduling layer separately.
+signallang implements this scheduling layer directly, as an expression
+sandbox plus a small set of statement primitives, compiled to a flat
+instruction tape and executed one tick at a time by a caller-provided
+clock.
 
 ## Development
 
@@ -325,12 +323,12 @@ pip install -e ".[test]"
 pytest -v
 ```
 
-`compiler.py`/`vm.py` never import `time` — the whole VM is timing-free
-by construction, and CI enforces this with a grep, alongside a check that
-`src/signallang` never references `rclpy`/`ros2` (this package has zero
-ROS dependency; a ROS2 adapter is expected to live in the *consuming*
-project instead, wrapping `SchemaProvider` around real message reflection
-and driving `step()` from an `rclpy.Timer`).
+`compiler.py` and `vm.py` do not import `time`; the VM is timing-free by
+construction, and CI enforces this with a grep. CI also verifies that
+`src/signallang` contains no reference to `rclpy` or `ros2` — this
+package has no ROS dependency. A ROS2 adapter, where needed, is
+implemented in the consuming project by wrapping `SchemaProvider` around
+message reflection and driving `step()` from an `rclpy.Timer`.
 
 Type-checking: `pip install -e ".[dev]" && mypy src/signallang`.
 
