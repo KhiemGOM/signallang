@@ -192,23 +192,30 @@ compare arrays and objects structurally, for free, via Python's own
 equality — no special-casing needed. `terop` may return an array or
 object, so it can select between two of them conditionally.
 
-Assigning a whole object directly to a message field or to `send` names
-its own fields and needs no schema — unlike positional array fill
-(below), which maps each element to a schema field by position and
-therefore requires one:
-
-```
-send json { temperature: 20.0, variance: 0.1 };   # no schema_provider needed
-send [default, 20.0, 0.1];                          # requires a schema_provider
-```
-
 An array literal or `default` sentinel written directly as the entire
-value of a field assignment or `send` is always positional schema fill,
-regardless of what its own elements contain — to index into a freshly
-written array instead, assign it to a `var` first (`var tmp = [1, 2,
-3]; data = tmp[0];`). `default` is only meaningful inside that
-schema-fill form; it is not a valid value inside `json {}` or a general
-array literal, which have no schema to consult.
+value of a field assignment or `send` is interpreted against whatever
+`schema_provider` the host application passed to `compile_script()` — a
+script never branches on whether one exists; that choice belongs to the
+integration layer, not the script:
+
+```
+send json { temperature: 20.0, variance: 0.1 };   # own field names, no schema needed either way
+send [20.0, 0.1];                                   # schema present: fills its fields by position
+                                                     # no schema: published as a plain 2-element array
+send [default, 20.0, 0.1];                          # `default` always needs a schema - no fallback meaning
+```
+
+`json {}` needs no schema either way, since its own keys already name
+its fields. A plain array literal does too, *if* a schema is present, to
+map each position to a field name; with none, it is simply published as
+an array value, exactly as written — never an error. `default` is the
+one exception: it always requires a schema, with or without an
+enclosing array, since there is no field to ask a missing schema for a
+zero value at. To index into a freshly written array rather than publish
+it, assign it to a `var` first (`var tmp = [1, 2, 3]; data = tmp[0];`) —
+an array literal written directly as the whole value of a field/`send`
+assignment is always resolved against the schema (or its absence),
+never indexed in place.
 
 ### Control flow
 

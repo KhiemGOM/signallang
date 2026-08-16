@@ -89,9 +89,30 @@ def test_positional_fill_length_mismatch_is_an_error():
         run_all("msg = [1, 2];", schema_provider=schema)
 
 
-def test_positional_fill_without_schema_provider_is_a_clear_error():
+def test_array_literal_without_schema_provider_publishes_as_a_plain_array():
+    # no schema - not an error, and not positional fill either. A bare
+    # array literal with nothing to map it against is just published as
+    # a real array value. path=[] wraps non-dict values under "data",
+    # same convention as a whole-msg scalar assignment already uses.
+    results, _ = run_all("msg = [1, 2];\nsend hz 1 dur 1t;")
+    assert results[0].value == {"data": [1.0, 2.0]}
+
+
+def test_array_literal_without_schema_provider_at_a_nested_field():
+    results, _ = run_all("points = [1, 2, 3];\nsend hz 1 dur 1t;")
+    assert results[0].value == {"points": [1.0, 2.0, 3.0]}
+
+
+def test_nested_array_and_json_without_schema_provider():
+    results, _ = run_all('points = [1, json { x: 2, y: 3 }];\nsend hz 1 dur 1t;')
+    assert results[0].value == {"points": [1.0, {"x": 2.0, "y": 3.0}]}
+
+
+def test_default_inside_a_schema_free_array_is_still_an_error():
+    # default has no schema-free meaning - there's no field to ask a
+    # missing schema for a zero value at.
     with pytest.raises(ScriptError):
-        run_all("msg = [1, 2];")
+        run_all("msg = [default, 2];")
 
 
 def test_live_reads_field_assigned_earlier_in_same_statement_order():

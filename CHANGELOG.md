@@ -9,14 +9,19 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Arrays (`[expr, expr, ...]`) and objects (`json { key: expr, ... }`)
   as first-class values - assignable to a `var`, nestable inside each
   other, passable to `terop`. `arr[i]` and `obj["key"]`/`obj.key` index
-  into them, chainable (`arr[0].header.frame_id`). `json {}` assigned
-  directly to a message field or `send` names its own fields and needs
-  no `schema_provider`, unlike positional `[]` array fill (unchanged),
-  which still maps elements to schema fields by position and still
-  requires one. `==`/`!=` compare them structurally for free via
-  Python's own equality; every other operator (arithmetic, ordering, the
-  numeric postfixes) rejects an array/object operand the same way it
-  already rejected a string.
+  into them, chainable (`arr[0].header.frame_id`). `==`/`!=` compare
+  them structurally for free via Python's own equality; every other
+  operator (arithmetic, ordering, the numeric postfixes) rejects an
+  array/object operand the same way it already rejected a string.
+- A script never branches on whether a `schema_provider` exists - that
+  choice belongs to the integration layer. `json {}` needs no schema
+  either way (its own keys already name its fields). A bare array
+  literal written directly as a field/`send` value is interpreted
+  against whatever schema is present: fills fields by position if one
+  is given, or is simply published as a plain array value if not -
+  previously this was a hard error with no schema. `default` is the one
+  exception and always requires a schema, inside an array or not, since
+  there is no field to ask a missing schema for a zero value at.
 - New signal-shape builtins - plain, pure functions of an explicit
   elapsed-time argument, same as `sin`/`cos`: `square(t, low, high,
   period)`, `triangle(t, low, high, period)`, `sawtooth(t, low, high,

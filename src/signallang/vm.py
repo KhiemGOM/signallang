@@ -163,17 +163,46 @@ class ScriptRun:
             self._require_schema(path, "`default`")
             self._set_path(path, self.schema_provider.default_at(path))
         elif isinstance(value, ArrayLit):
-            self._require_schema(path, "positional array fill")
-            field_names = self.schema_provider.fields_at(path)
-            if len(field_names) != len(value.elements):
-                raise ScriptError(
-                    f"positional fill length mismatch at '{'.'.join(path) or '<msg>'}': "
-                    f"expected {len(field_names)} field(s), got {len(value.elements)}"
-                )
-            for name, elem in zip(field_names, value.elements):
-                self._apply_field(path + [name], elem)
+            # A schema maps positions to named fields (unchanged). With
+            # none, the script author shouldn't need to know or care -
+            # this is just published as a plain array value, the same
+            # way json {} already needs no schema for its own (self-
+            # naming) fields. Whether a schema exists at all is the
+            # integration layer's concern, not the script's.
+            if self.schema_provider is not None:
+                field_names = self.schema_provider.fields_at(path)
+                if len(field_names) != len(value.elements):
+                    raise ScriptError(
+                        f"positional fill length mismatch at '{'.'.join(path) or '<msg>'}': "
+                        f"expected {len(field_names)} field(s), got {len(value.elements)}"
+                    )
+                for name, elem in zip(field_names, value.elements):
+                    self._apply_field(path + [name], elem)
+            else:
+                self._set_path(path, [self._resolve_schema_free_element(e, path) for e in value.elements])
         else:
             raise ScriptError(f"internal: unexpected field value {value!r}")
+
+    def _resolve_schema_free_element(self, elem, path: list):
+        """Resolves one element of a schema-free ArrayLit to a plain
+        value, for embedding in a list rather than writing into self.msg
+        under a name the way _apply_field does. Only the element kinds
+        that make sense with no name to write to and no schema to
+        consult: a plain expression, or another nested array literal.
+        `default` has no schema-free meaning (there's no field to ask a
+        schema for a zero value at), and a live binding has no
+        per-element path to track re-evaluation against - both are a
+        clear error here instead of silently doing something surprising."""
+        if isinstance(elem, ExprSpan):
+            return self._eval(elem)
+        if isinstance(elem, ArrayLit):
+            return [self._resolve_schema_free_element(e, path) for e in elem.elements]
+        if isinstance(elem, Default):
+            raise ScriptError(f"'default' at '{'.'.join(path) or '<msg>'}' needs a schema_provider")
+        raise ScriptError(
+            f"a live value ('live'/'!') isn't supported inside a schema-free array literal "
+            f"at '{'.'.join(path) or '<msg>'}'"
+        )
 
     def _require_schema(self, path: list, what: str) -> None:
         if self.schema_provider is None:
