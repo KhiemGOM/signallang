@@ -142,11 +142,11 @@ if frame and true { ... }           # truthy iff non-empty, like Python
 ```
 
 `==`/`!=` work between any two values — a string is simply never equal to
-a number, no error, same as Python's own `1 == "1"`. Ordering (`< <= >
->=`) is lexicographic and requires both sides to be strings. Mixing a
-string with a number anywhere else — arithmetic (`- * / %`, unary `-`),
-ordering, or the `.s`/`.m`/`.ms` unit view — is a compile- or eval-time
-`ExprError`, not a silent coercion.
+a number, no error, same as Python's own `1 == "1"`. Ordering
+(`<`, `<=`, `>`, `>=`) is lexicographic and requires both sides to be
+strings. Mixing a string with a number anywhere else — arithmetic
+(`- * / %`, unary `-`), ordering, or the `.s`/`.m`/`.ms` unit view — is a
+compile- or eval-time `ExprError`, not a silent coercion.
 
 ### Control flow
 
