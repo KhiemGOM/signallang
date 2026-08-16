@@ -2,8 +2,9 @@
 that imports `time`. Real-time pacing was never signallang's job - `step()`
 returns instantly with no waiting - but this loop is genuinely useful to
 anyone using the package standalone, so it ships as a small, swappable
-wrapper on top of the pure core rather than being required. A Phase 3 ROS
-adapter would likely drive `step()` from a real `rclpy.Timer` instead.
+wrapper on top of the pure core rather than being required. A host
+application with its own timer (a robotics framework's scheduler, a game
+loop) would likely drive `step()` from that instead.
 """
 
 import time

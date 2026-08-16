@@ -3,7 +3,7 @@ one step() at a time. No `time` import anywhere in this file: `t`/`_t` are
 counted (advanced only inside a Send tick, by 1/hz), never read off a real
 clock, and step() never blocks. Real-time pacing between step() calls is
 entirely the caller's job (see realtime.py for the one opt-in convenience
-driver, or a Phase 3 rclpy.Timer adapter).
+driver, or a host application's own timer/event-loop callback).
 """
 
 import copy
