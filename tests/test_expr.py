@@ -98,6 +98,66 @@ def test_terop_dead_branch_still_raises():
         evaluate("terop(1 == 1, 1, 1/0)", {})
 
 
+# -- signal-shape builtins --------------------------------------------------
+# Plain, pure functions of an explicit elapsed-time argument - no magic,
+# same as sin/cos. `name!(args)` sugar (parser.py) is what injects _t as
+# that argument automatically for the fixed TIME_SHAPED_FUNCTIONS set.
+
+@pytest.mark.parametrize(
+    "expr, variables, expected",
+    [
+        ("linear(0, 20, 30, 10)", {}, 20.0),
+        ("linear(5, 20, 30, 10)", {}, 25.0),
+        ("linear(10, 20, 30, 10)", {}, 30.0),
+        ("linear(15, 20, 30, 10)", {}, 30.0),  # clamps past dur, holds at b
+        ("square(0, 0, 1, 2)", {}, 0.0),
+        ("square(1.5, 0, 1, 2)", {}, 1.0),
+        ("square(2, 0, 1, 2)", {}, 0.0),  # wraps to the next period
+        ("triangle(0, 0, 10, 4)", {}, 0.0),
+        ("triangle(2, 0, 10, 4)", {}, 10.0),  # peak at the half-period
+        ("triangle(4, 0, 10, 4)", {}, 0.0),  # back to 0 at a full period
+        ("sawtooth(0, 0, 10, 4)", {}, 0.0),
+        ("sawtooth(2, 0, 10, 4)", {}, 5.0),
+        ("damped_wave(0, 5, 0, 1)", {}, 0.0),  # sin(0) == 0 regardless of decay
+    ],
+)
+def test_signal_shape_builtins(expr, variables, expected):
+    assert evaluate(expr, variables) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "linear(0, 0, 1, 0)",  # dur must be > 0
+        "linear(0, 0, 1, -1)",
+        "square(0, 0, 1, 0)",  # period must be > 0
+        "triangle(0, 0, 1, 0)",
+        "sawtooth(0, 0, 1, 0)",
+        "damped_wave(0, 1, 0, 0)",
+    ],
+)
+def test_signal_shape_builtins_reject_non_positive_duration(expr):
+    with pytest.raises(ExprError):
+        evaluate(expr, {})
+
+
+def test_noise_returns_a_float():
+    # not a determinism test (random.gauss is genuinely random) - just
+    # confirms it's wired up and returns a plain float, not a crash.
+    for _ in range(20):
+        assert isinstance(evaluate("noise(0, 1)", {}), float)
+
+
+def test_bang_syntax_is_a_parse_time_construct_not_an_expr_operator():
+    # '!' is parser.py sugar (name!(args) as the whole assignment RHS) -
+    # expr.py itself has no idea what '!' means outside of '!=', so a
+    # bang call that leaks into an actual expr.py string (e.g. nested
+    # inside a larger expression, which the parser doesn't recognize as
+    # bang sugar) is a plain syntax error here, not silently live.
+    with pytest.raises(ExprError):
+        evaluate("1 + sin!(t)", {"t": 1.0})
+
+
 # -- strings ---------------------------------------------------------------
 
 @pytest.mark.parametrize(

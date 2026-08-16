@@ -21,6 +21,69 @@ def _terop(cond: Value, then: Value, otherwise: Value) -> Value:
     return then if is_truthy(cond) else otherwise
 
 
+def _linear(t: float, a: float, b: float, dur: float) -> float:
+    """Ramp from a to b over dur seconds of elapsed time t, then hold at
+    b. A plain, pure function - the "elapsed time" it ramps against is
+    just its first argument, same as any other function; nothing about it
+    is implicitly wired to the VM's own clock. `field = linear!(a, b,
+    dur);` is parser sugar that passes `_t` as this argument for you."""
+    if dur <= 0:
+        raise ValueError(f"linear(): dur must be greater than 0, got {dur}")
+    return a + (b - a) * min(1.0, t / dur)
+
+
+def _square(t: float, low: float, high: float, period: float) -> float:
+    """A 50% duty cycle square wave: low for the first half of each
+    period, high for the second half."""
+    if period <= 0:
+        raise ValueError(f"square(): period must be greater than 0, got {period}")
+    return high if (t % period) >= period / 2.0 else low
+
+
+def _triangle(t: float, low: float, high: float, period: float) -> float:
+    """Ramps low -> high over the first half of each period, high -> low
+    over the second half."""
+    if period <= 0:
+        raise ValueError(f"triangle(): period must be greater than 0, got {period}")
+    half = period / 2.0
+    phase = t % period
+    if phase < half:
+        return low + (high - low) * (phase / half)
+    return high - (high - low) * ((phase - half) / half)
+
+
+def _sawtooth(t: float, low: float, high: float, period: float) -> float:
+    """Ramps low -> high over the whole period, then snaps back to low."""
+    if period <= 0:
+        raise ValueError(f"sawtooth(): period must be greater than 0, got {period}")
+    return low + (high - low) * ((t % period) / period)
+
+
+def _damped_wave(t: float, amplitude: float, decay: float, period: float) -> float:
+    """A decaying sinusoid - the natural (unforced) response shape of an
+    underdamped 2nd-order system like an RLC circuit: amplitude * e^(-decay
+    * t) * sin(2*pi*t / period). `decay` is the damping rate in 1/s;
+    `period` is the oscillation period in seconds."""
+    if period <= 0:
+        raise ValueError(f"damped_wave(): period must be greater than 0, got {period}")
+    return amplitude * math.exp(-decay * t) * math.sin(2.0 * math.pi * t / period)
+
+
+def _noise(mean: float, stddev: float) -> float:
+    """A single Gaussian-distributed random draw - call it inside a live
+    context (`noise!(mean, stddev)`) for fresh jitter every tick, or bare
+    for a one-shot random value frozen at assignment time, exactly like
+    any other function."""
+    return random.gauss(mean, stddev)
+
+
+# The fixed set of "time-shaped" builtins - the only ones whose bang-call
+# sugar (name!(args)) also injects _t as a leading argument, matching the
+# ergonomic call shape they'd otherwise lose (linear!(20, 30, 10s), not
+# linear!(_t, 20, 30, 10s)). Every other function's bang call wraps its
+# arguments exactly as written - see parser.py's _try_parse_bang_call.
+TIME_SHAPED_FUNCTIONS = frozenset({"linear", "square", "triangle", "sawtooth", "damped_wave"})
+
 _FUNCTIONS: dict[str, Callable[..., Value]] = {
     "sin": math.sin,
     "cos": math.cos,
@@ -31,12 +94,14 @@ _FUNCTIONS: dict[str, Callable[..., Value]] = {
     "min": min,
     "max": max,
     "random": random.random,
-    # terop(cond, then, else) - a plain named function, not a `? :` symbol
-    # (this language favors words over punctuation throughout - and/or/not,
-    # true/false - no reason for this to be the exception), and not called
-    # `if` either, so it never collides with the statement-level `if {}
-    # else {}` block a future statement grammar built on this module would
-    # add. Both branches are evaluated eagerly (this parser evaluates as it
+    "noise": _noise,
+    "linear": _linear,
+    "square": _square,
+    "triangle": _triangle,
+    "sawtooth": _sawtooth,
+    "damped_wave": _damped_wave,
+    # terop(cond, then, else) - a plain named function, not a `? :` symbol.
+    # Both branches are evaluated eagerly (this parser evaluates as it
     # parses, it doesn't build an AST to defer either side) - a
     # division-by-zero in the branch NOT taken still raises, which reads as
     # "fix your unreached branch too" rather than a silent trap.
@@ -321,6 +386,8 @@ class _Parser:
                     result = _FUNCTIONS[name](*args)
                 except TypeError as exc:
                     raise ExprError(f"function '{name}' got an invalid argument type: {exc}") from None
+                except (ValueError, ZeroDivisionError) as exc:
+                    raise ExprError(f"function '{name}' failed: {exc}") from None
                 return self._postfix(result if isinstance(result, str) else float(result))
             if name in self.variables:
                 value = self.variables[name]

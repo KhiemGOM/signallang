@@ -210,16 +210,36 @@ def test_live_block_cannot_write_undeclared_name():
         parse("x = live {\n outer_var = 5;\n return outer_var;\n};")
 
 
-def test_linear_sugar_desugars_to_live_block():
-    prog = parse("temperature = linear(20, 30, 10s);")
+def test_bang_call_desugars_to_live_block():
+    prog = parse("temperature = linear!(20, 30, 10s);")
     node = prog.body[0].value
     assert isinstance(node, LiveBlock)
-    assert "_t.s" in node.return_expr.text
+    assert node.return_expr.text == "linear(_t, 20, 30, 10s)"
+
+
+def test_bang_call_on_non_time_shaped_function_does_not_inject_t():
+    prog = parse("data = sin!(t);")
+    node = prog.body[0].value
+    assert isinstance(node, LiveBlock)
+    assert node.return_expr.text == "sin(t)"
+
+
+def test_bang_call_with_no_args():
+    prog = parse("data = noise!();")
+    node = prog.body[0].value
+    assert isinstance(node, LiveBlock)
+    assert node.return_expr.text == "noise()"
+
+
+def test_bare_call_without_bang_is_a_plain_expr_span():
+    # no '!' - an ordinary one-shot function call, not live sugar.
+    prog = parse("data = sin(t);")
+    assert prog.body[0].value == ExprSpan("sin(t)")
 
 
 def test_field_name_can_shadow_a_function_name():
     # geometry_msgs/Twist really does have a field called `linear`, distinct
-    # from the linear(...) builtin - the collision must not be an error.
+    # from the linear!(...) builtin - the collision must not be an error.
     prog = parse("linear.x = 1.0;\nsend;")
     assert prog.body[0].path == ["linear", "x"]
 

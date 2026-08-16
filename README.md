@@ -20,7 +20,7 @@ load-testing a message consumer, feeding a simulator.
 from signallang import compile_script
 
 compiled = compile_script("""
-    temperature = linear(20, 30, 10s);
+    temperature = linear!(20, 30, 10s);
     send hz 2 dur inf;
 """)
 run = compiled.new_run()
@@ -34,7 +34,7 @@ You can write the loop by hand — `while True: msg.temp += 0.5; pub.publish(msg
 — and for a one-off script that's often the right call. signallang earns
 its keep once you want any of these on top:
 
-- **Ramps, holds, and repeats composed declaratively** — `linear(...)`,
+- **Ramps, holds, and repeats composed declaratively** — `linear!(...)`,
   `if`/`repeat`/`for`, multiple `send` phases in sequence — without hand
   rolling tick-counting and phase-transition bookkeeping every time.
 - **A script as *data***, not code — safe to accept from a config file, a
@@ -185,41 +185,74 @@ send [1, 2, 3];                  # value sugar: send this array directly
 statement. `hz` is clamped to a 50Hz safety ceiling (`MAX_HZ`), enforced
 by the compiler.
 
-### `live` blocks and timers
+### Live vs. static — one rule, no exceptions
 
-A `live { ... }` block re-evaluates on every tick instead of freezing
-after its first assignment — this is how ramps and anything
-time-dependent stay moving:
+A plain assignment evaluates **once** and freezes until reassigned —
+`data = sin(t);` computes `sin(t)` at the moment that instruction runs and
+holds it, exactly like `data = 5;` holds `5`. To make something
+re-evaluate every tick, you always write `live` — there's no function
+whose name secretly makes it live behind your back:
 
 ```
-temperature = live { return 20 + sin(t); };   # re-evaluated every tick
+temperature = live { return 20 + sin(t); };   # the full form: locals, if/else allowed
+temperature = live 20 + sin(t);                # shorthand: sugar for the block above
+temperature = live sin(t);                     # any function works the same way live
+```
 
-# linear(from, to, duration) is sugar for a live block driven by a fresh
-# per-binding timer (_t) — the ramp restarts cleanly every time this
-# assignment statement re-executes, e.g. once per lap of an enclosing repeat.
-linear.x = linear(0, 1.0, 3s);
+`name!(args)` is a second, narrower shorthand for the single most common
+case — wrapping one call in `live` with nothing else going on:
 
+```
+temperature = linear!(20, 30, 10s);   # sugar for: live { return linear(_t, 20, 30, 10s); };
+data = sin!(t);                        # sugar for: live { return sin(t); };
+```
+
+`!` is only recognized as the *entire* right-hand side — `data = 1 +
+sin!(t);` doesn't parse as live sugar (it's a syntax error at that `!`);
+write `data = live 1 + sin(t);` instead. `t` is the VM's running tick
+counter; `_t` is a `latching_timer()` implicitly created per `live`
+binding — unstarted until first read, and a fresh one created each time
+its assignment statement (re-)executes, so a ramp inside a `repeat`
+restarts from zero on every lap, for free.
+
+### Signal-shape builtins
+
+Plain, pure functions of an explicit elapsed-time argument — nothing
+about them is implicitly wired to the VM's clock, so they behave exactly
+like `sin`/`cos` do: call them bare for a frozen one-shot value, or with
+`!` for a value that moves every tick.
+
+| | |
+|---|---|
+| `linear(t, a, b, dur)` | ramps a → b over dur seconds, then holds at b |
+| `square(t, low, high, period)` | 50% duty cycle: low for the first half of each period, high for the second |
+| `triangle(t, low, high, period)` | ramps low → high over the first half, high → low over the second |
+| `sawtooth(t, low, high, period)` | ramps low → high over the whole period, then snaps back to low |
+| `damped_wave(t, amplitude, decay, period)` | a decaying sinusoid — the natural response shape of an underdamped 2nd-order system (an RLC circuit's own step response): `amplitude * e^(-decay·t) * sin(2π·t/period)` |
+| `noise(mean, stddev)` | one Gaussian-distributed random draw (no time argument — it's not time-shaped, just non-deterministic) |
+
+`linear`/`square`/`triangle`/`sawtooth`/`damped_wave` are exactly the set
+whose `!` sugar also injects `_t` as that first argument for you —
+`square!(0, 1, 2s)`, not `square!(_t, 0, 1, 2s)`. Every other function's
+`!` wraps its arguments exactly as written.
+
+```
 var mt = timer();               # an explicit named timer
 mt.reset();                     # zero it immediately, mid-script
 data = mt.s;                    # read it back out in seconds
 ```
 
-`t` is the VM's running tick counter. `_t` is a `latching_timer()`
-implicitly created per `live` binding: unstarted until first read, and a
-fresh one is created each time its assignment statement (re-)executes —
-so a ramp inside a `repeat` restarts from zero on every lap, for free.
-
 ## Full worked example
 
 ```
 repeat {
-    linear.x = linear(0, 1.0, 3s);
+    linear.x = linear!(0, 1.0, 3s);
     send hz 10 dur 3s;
 
     linear.x = 1.0;
     send hz 10 dur 5s;
 
-    linear.x = linear(1.0, 0, 3s);
+    linear.x = linear!(1.0, 0, 3s);
     send hz 10 dur 3s;
 
     linear.x = 0.0;

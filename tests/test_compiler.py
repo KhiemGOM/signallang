@@ -28,7 +28,7 @@ def test_for_inf_end_compiles_unconditional_backedge():
 
 
 def test_linear_desugars_to_live_block_with_created_timer():
-    instrs = compile_program(parse("temperature = linear(20, 30, 10s);\nsend;"))
+    instrs = compile_program(parse("temperature = linear!(20, 30, 10s);\nsend;"))
     kinds = [type(i).__name__ for i in instrs]
     assert kinds[0] == "CreateTimer"
     assert kinds[1] == "SetField"

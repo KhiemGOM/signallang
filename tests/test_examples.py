@@ -18,7 +18,7 @@ def collect(src, n):
 
 
 def test_example1_temperature_drift():
-    src = "temperature = linear(20, 30, 10s);\nsend hz 2 dur inf;"
+    src = "temperature = linear!(20, 30, 10s);\nsend hz 2 dur inf;"
     results = collect(src, 40)
     # hz=2 -> 0.5s per tick; ramp 20->30 over 10s = 20 ticks to reach 30
     assert results[0].value["temperature"] == pytest.approx(20.0)
@@ -56,13 +56,13 @@ def test_example4_heartbeat_counter_unbounded():
 
 def test_example5_motion_ramp_cycle_restarts_each_lap():
     src = """repeat {
-    linear.x = linear(0, 1.0, 3s);
+    linear.x = linear!(0, 1.0, 3s);
     send hz 10 dur 3s;
 
     linear.x = 1.0;
     send hz 10 dur 5s;
 
-    linear.x = linear(1.0, 0, 3s);
+    linear.x = linear!(1.0, 0, 3s);
     send hz 10 dur 3s;
 
     linear.x = 0.0;

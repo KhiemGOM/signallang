@@ -25,6 +25,7 @@ from .ast_nodes import (
     VarDecl,
 )
 from .errors import ScriptError
+from .expr import TIME_SHAPED_FUNCTIONS
 
 _UNIT_SUFFIXES = ("ms", "s", "m", "t")  # longest match first
 _KEYWORDS = frozenset(
@@ -42,7 +43,6 @@ _KEYWORDS = frozenset(
         "default",
         "live",
         "return",
-        "linear",
         "timer",
         "latching_timer",
         "reset",
@@ -430,19 +430,27 @@ class Parser:
             self._advance_word("default")
             return Default()
         c = self._peek_char()
-        # A leading '"' is NOT special-cased here (unlike default/[/live/
-        # linear, which really are distinct grammar forms) - a string
-        # literal is just an ordinary atom in expr.py now, so "map" and
-        # "prefix_" + suffix both fall through to the plain ExprSpan path
-        # below; span.scan_span already treats quoted text as opaque, so
-        # a stop_char or a `.` inside the string can't be mistaken for the
+        # A leading '"' is NOT special-cased here (unlike default/[/live,
+        # which really are distinct grammar forms) - a string literal is
+        # just an ordinary atom in expr.py now, so "map" and "prefix_" +
+        # suffix both fall through to the plain ExprSpan path below;
+        # span.scan_span already treats quoted text as opaque, so a
+        # stop_char or a `.` inside the string can't be mistaken for the
         # span's own terminator.
         if c == "[":
             return self._parse_array_lit()
         if self._looking_at_word("live"):
-            return self._parse_live_block()
-        if self._looking_at_word("linear"):
-            return self._parse_linear_sugar()
+            return self._parse_live_block(stop_chars, stop_at_send_modifiers)
+        bang_call = self._try_parse_bang_call()
+        if bang_call is not None:
+            return bang_call
+        return self._scan_value_span(stop_chars, stop_at_send_modifiers)
+
+    def _scan_value_span(self, stop_chars: str, stop_at_send_modifiers: bool) -> ExprSpan:
+        """The plain-expression fallback shared by _parse_value's own tail
+        and live's one-line shorthand below - scans to whichever
+        terminator applies in this context (a stop char, or the sendvalue
+        scanner that also stops before a trailing hz/dur keyword)."""
         if stop_at_send_modifiers:
             return self._scan_send_leading_value_span()
         span_end = span.scan_span(self.text, self.pos, stop_chars)
@@ -466,18 +474,24 @@ class Parser:
         self._expect_char("]")
         return ArrayLit(elements)
 
-    def _parse_live_block(self):
+    def _parse_live_block(self, stop_chars: str, stop_at_send_modifiers: bool):
         self._advance_word("live")
-        self._expect_char("{")
-        saved_known = self.known_vars
-        self.known_vars = set()  # live blocks can only write their own locals
-        body = self._parse_block_until_return()
-        self._advance_word("return")
-        ret = self._scan_expr_span(";")
-        self._expect_char(";")
-        self._expect_char("}")
-        self.known_vars = saved_known
-        return LiveBlock(body=body, return_expr=ret)
+        if self._peek_char() == "{":
+            self._expect_char("{")
+            saved_known = self.known_vars
+            self.known_vars = set()  # live blocks can only write their own locals
+            body = self._parse_block_until_return()
+            self._advance_word("return")
+            ret = self._scan_expr_span(";")
+            self._expect_char(";")
+            self._expect_char("}")
+            self.known_vars = saved_known
+            return LiveBlock(body=body, return_expr=ret)
+        # shorthand: `live <expr>;` desugars to `live { return <expr>; };` -
+        # same LiveBlock AST (empty body, no locals), for the common case
+        # of one live expression that needs no locals or branching.
+        ret = self._scan_value_span(stop_chars, stop_at_send_modifiers)
+        return LiveBlock(body=[], return_expr=ret)
 
     def _parse_block_until_return(self) -> list:
         stmts = []
@@ -506,17 +520,48 @@ class Parser:
             )
         return Reassign(name=name, value=value)
 
-    def _parse_linear_sugar(self):
-        self._advance_word("linear")
-        self._expect_char("(")
-        a = self._scan_expr_span(",")
-        self._expect_char(",")
-        b = self._scan_expr_span(",")
-        self._expect_char(",")
-        d = self._scan_expr_span(")")
+    def _try_parse_bang_call(self):
+        """`name!(args)` - live-call sugar, recognized only as the WHOLE
+        value (not nested inside a larger expression - `data = 1 +
+        sin!(t);` isn't supported, matching how the old linear(...) sugar
+        was also whole-RHS-only). Desugars to `live { return name(args);
+        }` - or, for the fixed set of TIME_SHAPED_FUNCTIONS (linear/
+        square/triangle/sawtooth/damped_wave), `live { return name(_t,
+        args); }`, injecting the elapsed-time argument those specific
+        builtins expect first so the call site keeps the ergonomic shape
+        it would otherwise lose (`linear!(20, 30, 10s)`, not `linear!(_t,
+        20, 30, 10s)`). name isn't validated here - an unknown function
+        surfaces the same "unknown function" error at eval time as any
+        other bad call would, structural parsing doesn't need to know the
+        exact whitelist. Backtracks fully on any mismatch (no identifier,
+        no '!', '!' not followed directly by '(') so the caller can fall
+        through to a plain value."""
+        save = self.pos
+        self._skip_ws()
+        start = self.pos
+        if self.pos >= len(self.text) or not (self.text[self.pos].isalpha() or self.text[self.pos] == "_"):
+            self.pos = save
+            return None
+        while self.pos < len(self.text) and (self.text[self.pos].isalnum() or self.text[self.pos] == "_"):
+            self.pos += 1
+        name = self.text[start : self.pos]
+        if self.pos >= len(self.text) or self.text[self.pos] != "!":
+            self.pos = save
+            return None
+        self.pos += 1  # '!'
+        if self.pos >= len(self.text) or self.text[self.pos] != "(":
+            self.pos = save
+            return None
+        self.pos += 1  # '('
+        args_end = span.scan_span(self.text, self.pos, ")")
+        args_text = self.text[self.pos : args_end].strip()
+        self.pos = args_end
         self._expect_char(")")
-        return_expr = ExprSpan(f"({a.text}) + (({b.text}) - ({a.text})) * min(1, _t.s / (({d.text}).s))")
-        return LiveBlock(body=[], return_expr=return_expr)
+        if name in TIME_SHAPED_FUNCTIONS:
+            call_text = f"{name}(_t, {args_text})" if args_text else f"{name}(_t)"
+        else:
+            call_text = f"{name}({args_text})"
+        return LiveBlock(body=[], return_expr=ExprSpan(call_text))
 
 
 def parse(source: str) -> Program:

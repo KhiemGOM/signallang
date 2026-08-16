@@ -122,3 +122,30 @@ def test_string_field_concatenation():
     src = 'var suffix = "link";\nframe_id = "base_" + suffix;\nsend hz 1 dur 1t;'
     results, _ = run_all(src)
     assert results[0].value["frame_id"] == "base_link"
+
+
+def test_bang_call_reevaluates_every_tick():
+    # hz=1 -> _t advances by 1.0 (second) per tick: 0, 1, 2, 3. period=2s
+    # (square's argument is plain seconds, same units as _t - not a
+    # tick-count literal, which only send's own dur modifier understands).
+    src = "data = square!(0, 1, 2);\nsend hz 1 dur 4t;"
+    results, _ = run_all(src)
+    # low for _t=0, high for _t=1, low again for _t=2, high for _t=3 -
+    # genuinely re-evaluating _t each step, not frozen after the first tick.
+    assert [r.value["data"] for r in results] == [0.0, 1.0, 0.0, 1.0]
+
+
+def test_live_shorthand_without_bang_reevaluates_every_tick():
+    # `live <expr>;` - the keyword-prefix shorthand for the general case
+    # (not a single bang-callable function), still real live semantics.
+    src = "data = live t * 2;\nsend hz 1 dur 3t;"
+    results, _ = run_all(src)
+    assert [r.value["data"] for r in results] == [0.0, 2.0, 4.0]
+
+
+def test_plain_call_without_bang_is_static_once():
+    # sin(t) with no '!' is an ordinary one-shot call - evaluated once at
+    # assignment time and frozen, exactly like a plain number would be.
+    src = "data = sin(t);\nsend hz 1 dur 3t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == results[1].value["data"] == results[2].value["data"]

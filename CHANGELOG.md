@@ -6,6 +6,34 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- New signal-shape builtins - plain, pure functions of an explicit
+  elapsed-time argument, same as `sin`/`cos`: `square(t, low, high,
+  period)`, `triangle(t, low, high, period)`, `sawtooth(t, low, high,
+  period)`, `damped_wave(t, amplitude, decay, period)` (a decaying
+  sinusoid - the natural response shape of an underdamped 2nd-order
+  system like an RLC circuit), and `noise(mean, stddev)` (one Gaussian
+  random draw).
+- `name!(args)` - live-call sugar for any function, as the whole
+  assignment right-hand side: `sin!(t)` desugars to `live { return
+  sin(t); };`. For the fixed set of time-shaped builtins (`linear`,
+  `square`, `triangle`, `sawtooth`, `damped_wave`), `!` also injects `_t`
+  as the leading argument so the call keeps its ergonomic shape -
+  `linear!(20, 30, 10s)`, not `linear!(_t, 20, 30, 10s)`.
+- `field = live <expr>;` - a one-line shorthand for `live { return
+  <expr>; };`, for any live expression that isn't a single bang-callable
+  function (`data = live t * 2 + 1;`).
+
+### Changed
+- **Breaking:** `linear(from, to, dur)` is no longer implicit magic sugar
+  - it's an ordinary function, `linear(t, from, to, dur)`, taking elapsed
+  time as an explicit first argument like any other function. Previously
+  it was the *only* function name the parser silently auto-wrapped in a
+  live block, which meant nothing about a call site told you whether it
+  was live or a plain one-shot call - you had to already know `linear`
+  was special. Now **nothing** is implicitly live; `live` (the keyword,
+  the shorthand, or `!`) is the only thing that ever means "re-evaluates
+  every tick," with zero hardcoded exceptions. Existing scripts using
+  bare `linear(a, b, dur)` need `linear!(a, b, dur)` instead.
 - Strings are now first-class expression values, not just an
   assignment-only literal: `+` concatenation, `==`/`!=`/`< <= > >=`
   comparison (ordering is lexicographic, requires both sides to be
