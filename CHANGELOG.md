@@ -5,6 +5,31 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Strings are now first-class expression values, not just an
+  assignment-only literal: `+` concatenation, `==`/`!=`/`< <= > >=`
+  comparison (ordering is lexicographic, requires both sides to be
+  strings), and `and`/`or`/`not`/`terop` truthiness (non-empty = truthy).
+  `frame_id = frame + "_link";` and `if frame == "map" { ... }` both work
+  now. Mixing a string with a number in arithmetic, ordering, or the
+  `.s`/`.m`/`.ms` unit view is a clear `ExprError`, never a silent
+  coercion or a raw Python `TypeError`.
+
+### Changed
+- `StringLit` is gone from the AST - a bare string literal is just an
+  `ExprSpan` whose text happens to be a quoted atom, evaluated by the
+  same expression engine as everything else. No behavior change for
+  existing scripts, only an internal simplification enabled by strings
+  becoming real expression values.
+
+### Fixed
+- Two latent truthiness bugs, unreachable until strings could exist:
+  `if`'s `JumpIfFalse` and a `live` block's `if` both checked
+  `cond == 0.0` / `cond != 0.0` directly, which is wrong for a string (a
+  str is never `==`/`!=` a float, so every string condition - even an
+  empty one - would have taken the same branch regardless of truthiness).
+  Both now go through a single `is_truthy()` helper.
+
 ## [0.1.1] — 2026-08-17
 
 ### Added

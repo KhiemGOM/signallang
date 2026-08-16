@@ -12,7 +12,7 @@ import copy
 from dataclasses import dataclass
 
 from . import expr
-from .ast_nodes import ArrayLit, Default, ExprSpan, StringLit
+from .ast_nodes import ArrayLit, Default, ExprSpan
 from .compiler import (
     MAX_HZ,
     CreateTimer,
@@ -92,7 +92,7 @@ class ScriptRun:
         elif isinstance(instr, Jump):
             self.ip = instr.target
         elif isinstance(instr, JumpIfFalse):
-            self.ip = instr.target if self._eval(instr.cond) == 0.0 else self.ip + 1
+            self.ip = self.ip + 1 if expr.is_truthy(self._eval(instr.cond)) else instr.target
         else:
             raise ScriptError(f"internal: unknown instruction {instr!r}")
 
@@ -143,7 +143,7 @@ class ScriptRun:
             scope["_t"] = self._timer_value(self.timers[live_timer_name])
         return scope
 
-    def _eval(self, span: ExprSpan, live_timer_name: str | None = None, extra: dict | None = None) -> float:
+    def _eval(self, span: ExprSpan, live_timer_name: str | None = None, extra: dict | None = None) -> expr.Value:
         scope = self._flat_scope(live_timer_name)
         if extra:
             scope.update(extra)
@@ -159,8 +159,6 @@ class ScriptRun:
         self.live_bindings.pop(key, None)
         if isinstance(value, ExprSpan):
             self._set_path(path, self._eval(value))
-        elif isinstance(value, StringLit):
-            self._set_path(path, value.value)
         elif isinstance(value, Default):
             self._require_schema(path, "`default`")
             self._set_path(path, self.schema_provider.default_at(path))
@@ -211,17 +209,17 @@ class ScriptRun:
             cur[path[-1]] = value
         return result
 
-    def _eval_live_block(self, binding: LiveBinding) -> float:
+    def _eval_live_block(self, binding: LiveBinding) -> expr.Value:
         local_vars: dict = {}
 
-        def eval_span(span: ExprSpan) -> float:
+        def eval_span(span: ExprSpan) -> expr.Value:
             return self._eval(span, live_timer_name=binding.timer_name, extra=local_vars)
 
         def exec_stmt(s) -> None:
             if isinstance(s, LiveSetVar):
                 local_vars[s.name] = eval_span(s.expr)
             elif isinstance(s, LiveIf):
-                branch = s.then_body if eval_span(s.cond) != 0.0 else s.else_body
+                branch = s.then_body if expr.is_truthy(eval_span(s.cond)) else s.else_body
                 for x in branch:
                     exec_stmt(x)
             else:

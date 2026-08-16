@@ -100,3 +100,25 @@ def test_live_reads_field_assigned_earlier_in_same_statement_order():
     src = "var base = 10;\ndata = live { return base + t; };\nsend hz 1 dur 2t;"
     results, _ = run_all(src)
     assert [r.value["data"] for r in results] == [10.0, 11.0]
+
+
+def test_if_branches_on_string_comparison():
+    src = 'var frame = "map";\nif frame == "map" {\n data = 1;\n} else {\n data = 0;\n}\nsend hz 1 dur 1t;'
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 1.0
+
+
+def test_if_condition_empty_string_is_falsy():
+    # regression test: JumpIfFalse used to check `cond == 0.0`, which is
+    # never true for a str (mismatched types never compare equal in
+    # Python), so every string condition - even an empty one - took the
+    # "true" branch. Fixed to use expr.is_truthy().
+    src = 'if "" {\n data = 1;\n} else {\n data = 2;\n}\nsend hz 1 dur 1t;'
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 2.0
+
+
+def test_string_field_concatenation():
+    src = 'var suffix = "link";\nframe_id = "base_" + suffix;\nsend hz 1 dur 1t;'
+    results, _ = run_all(src)
+    assert results[0].value["frame_id"] == "base_link"

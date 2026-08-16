@@ -20,7 +20,6 @@ from .ast_nodes import (
     Reassign,
     Repeat,
     Send,
-    StringLit,
     TimerDecl,
     TimerReset,
     VarDecl,
@@ -431,8 +430,13 @@ class Parser:
             self._advance_word("default")
             return Default()
         c = self._peek_char()
-        if c == '"':
-            return self._parse_string_lit()
+        # A leading '"' is NOT special-cased here (unlike default/[/live/
+        # linear, which really are distinct grammar forms) - a string
+        # literal is just an ordinary atom in expr.py now, so "map" and
+        # "prefix_" + suffix both fall through to the plain ExprSpan path
+        # below; span.scan_span already treats quoted text as opaque, so
+        # a stop_char or a `.` inside the string can't be mistaken for the
+        # span's own terminator.
         if c == "[":
             return self._parse_array_lit()
         if self._looking_at_word("live"):
@@ -447,17 +451,6 @@ class Parser:
             raise ScriptError("expected a value", self.pos)
         self.pos = span_end
         return ExprSpan(text)
-
-    def _parse_string_lit(self):
-        start = self.pos
-        self.pos += 1  # opening quote
-        while self.pos < len(self.text) and self.text[self.pos] != '"':
-            self.pos += 1
-        if self.pos >= len(self.text):
-            raise ScriptError("unterminated string literal", start)
-        value = self.text[start + 1 : self.pos]
-        self.pos += 1  # closing quote
-        return StringLit(value)
 
     def _parse_array_lit(self):
         self.pos += 1  # '['

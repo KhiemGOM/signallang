@@ -125,6 +125,29 @@ Only names you declare with `var`, or that the language defines (`t`,
 `_t`, `i` inside a `for`), are ever in scope — there's no ambient global
 namespace to reach into.
 
+### Strings are real values, not just literals
+
+A string isn't a special assignment-only case — it flows through the same
+expression grammar as a number, with the operators that make sense for it:
+
+```
+var frame = "map";
+frame_id = frame + "_link";        # concatenation - "map_link"
+if frame == "map" {                 # ==/!=/< <= > >= all work on strings
+    status = "ok";
+} else {
+    status = "unexpected frame";
+}
+if frame and true { ... }           # truthy iff non-empty, like Python
+```
+
+`==`/`!=` work between any two values — a string is simply never equal to
+a number, no error, same as Python's own `1 == "1"`. Ordering (`< <= >
+>=`) is lexicographic and requires both sides to be strings; mixing a
+string with a number anywhere arithmetic or ordering is expected (`- * /
+%`, unary `-`, `< <= > >=`, the `.s`/`.m`/`.ms` unit view) is a compile-
+or eval-time `ExprError`, not a silent coercion.
+
 ### Control flow
 
 ```

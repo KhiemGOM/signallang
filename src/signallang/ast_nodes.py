@@ -15,11 +15,6 @@ class ExprSpan:
 
 
 @dataclass
-class StringLit:
-    value: str
-
-
-@dataclass
 class Default:
     pass
 
@@ -35,7 +30,9 @@ class LiveBlock:
     return_expr: ExprSpan
 
 
-# Value = ExprSpan | StringLit | Default | ArrayLit | LiveBlock
+# Value = ExprSpan | Default | ArrayLit | LiveBlock - a bare string literal
+# ("map") is just an ExprSpan whose text happens to be a quoted atom;
+# expr.py evaluates it to a Python str like any other expression.
 
 
 @dataclass

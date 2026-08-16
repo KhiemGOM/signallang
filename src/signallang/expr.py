@@ -2,14 +2,26 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Callable
+from typing import Callable, Union
 
 
-def _terop(cond: float, then: float, otherwise: float) -> float:
-    return then if cond else otherwise
+Value = Union[float, str]
 
 
-_FUNCTIONS: dict[str, Callable[..., float]] = {
+def is_truthy(value: Value) -> bool:
+    """The one truthiness rule for and/or/not, terop's cond, and if/repeat
+    conditions: a string is truthy iff non-empty, a number iff nonzero -
+    plain Python truthiness, made explicit so nothing falls back to `value
+    != 0.0`, which is wrong for strings (a str is never == or != a float,
+    so that check would call every string truthy, empty or not)."""
+    return len(value) > 0 if isinstance(value, str) else value != 0.0
+
+
+def _terop(cond: Value, then: Value, otherwise: Value) -> Value:
+    return then if is_truthy(cond) else otherwise
+
+
+_FUNCTIONS: dict[str, Callable[..., Value]] = {
     "sin": math.sin,
     "cos": math.cos,
     "abs": abs,
@@ -54,6 +66,10 @@ class ExprError(ValueError):
     pass
 
 
+def _type_name(value: Value) -> str:
+    return "string" if isinstance(value, str) else "number"
+
+
 class _Parser:
     """Tiny recursive-descent parser/evaluator for a restricted arithmetic
     and boolean expression language - deliberately NOT eval()/exec(): the
@@ -72,7 +88,7 @@ class _Parser:
         self.pos = 0
         self.variables = variables
 
-    def parse(self) -> float:
+    def parse(self) -> Value:
         value = self._or()
         self._skip_ws()
         if self.pos != len(self.text):
@@ -95,80 +111,115 @@ class _Parser:
         # word boundary - "android" shouldn't match the "and" keyword.
         return end >= len(self.text) or not (self.text[end].isalnum() or self.text[end] == "_")
 
-    def _or(self) -> float:
+    def _or(self) -> Value:
         value = self._and()
         while self._looking_at_word("or"):
             self.pos += 2
             right = self._and()
-            value = 1.0 if (value != 0.0 or right != 0.0) else 0.0
+            value = 1.0 if (is_truthy(value) or is_truthy(right)) else 0.0
         return value
 
-    def _and(self) -> float:
+    def _and(self) -> Value:
         value = self._not()
         while self._looking_at_word("and"):
             self.pos += 3
             right = self._not()
-            value = 1.0 if (value != 0.0 and right != 0.0) else 0.0
+            value = 1.0 if (is_truthy(value) and is_truthy(right)) else 0.0
         return value
 
-    def _not(self) -> float:
+    def _not(self) -> Value:
         if self._looking_at_word("not"):
             self.pos += 3
             value = self._not()
-            return 0.0 if value != 0.0 else 1.0
+            return 0.0 if is_truthy(value) else 1.0
         return self._comparison()
 
-    def _comparison(self) -> float:
+    def _comparison(self) -> Value:
         """A single, non-chaining comparison (1 < t < 5 isn't supported -
         write `t > 1 and t < 5` instead) - binds tighter than and/or/not,
         looser than +-, so `t + 1 < 5` parses as `(t + 1) < 5` and
-        `a > 1 and b > 2` parses as `(a > 1) and (b > 2)`."""
+        `a > 1 and b > 2` parses as `(a > 1) and (b > 2)`. `==`/`!=` work
+        between any two values (a str is simply never equal to a float,
+        same as Python) - `< <= > >=` require both sides to be the same
+        type (both numbers, or both strings - lexicographic ordering),
+        otherwise it's a clear error rather than a raw TypeError."""
         left = self._expr()
         self._skip_ws()
         for op in _COMPARISON_OPS:
             if self.text[self.pos : self.pos + len(op)] == op:
                 self.pos += len(op)
                 right = self._expr()
-                return 1.0 if _COMPARISONS[op](left, right) else 0.0
+                try:
+                    result = _COMPARISONS[op](left, right)
+                except TypeError:
+                    raise ExprError(
+                        f"cannot compare {_type_name(left)} and {_type_name(right)} with '{op}'"
+                    ) from None
+                return 1.0 if result else 0.0
         return left
 
-    def _expr(self) -> float:
+    def _expr(self) -> Value:
         value = self._term()
         while True:
             c = self._peek()
             if c == "+":
                 self.pos += 1
-                value += self._term()
+                right = self._term()
+                # str + str concatenates, float + float adds - anything
+                # mixed is a clear error rather than Python's own TypeError
+                # text. Branching explicitly (rather than an XOR guard
+                # followed by one `value + right`) lets mypy actually prove
+                # each arm's operand types instead of seeing two unions.
+                if isinstance(value, str) and isinstance(right, str):
+                    value = value + right
+                elif isinstance(value, str) or isinstance(right, str):
+                    raise ExprError(f"cannot use '+' between {_type_name(value)} and {_type_name(right)}")
+                else:
+                    value = value + right
             elif c == "-":
                 self.pos += 1
-                value -= self._term()
+                right = self._term()
+                if isinstance(value, str) or isinstance(right, str):
+                    raise ExprError(f"'-' is not supported for strings ({_type_name(value)} and {_type_name(right)})")
+                value = value - right
             else:
                 return value
 
-    def _term(self) -> float:
+    def _term(self) -> Value:
         value = self._unary()
         while True:
             c = self._peek()
             if c == "*":
                 self.pos += 1
-                value *= self._unary()
+                right = self._unary()
+                if isinstance(value, str) or isinstance(right, str):
+                    raise ExprError(f"'*' is not supported for strings ({_type_name(value)} and {_type_name(right)})")
+                value = value * right
             elif c == "/":
                 self.pos += 1
-                divisor = self._unary()
-                if divisor == 0:
+                right = self._unary()
+                if isinstance(value, str) or isinstance(right, str):
+                    raise ExprError(f"'/' is not supported for strings ({_type_name(value)} and {_type_name(right)})")
+                if right == 0:
                     raise ExprError("division by zero")
-                value /= divisor
+                value = value / right
             elif c == "%":
                 self.pos += 1
-                value %= self._unary()
+                right = self._unary()
+                if isinstance(value, str) or isinstance(right, str):
+                    raise ExprError(f"'%' is not supported for strings ({_type_name(value)} and {_type_name(right)})")
+                value = value % right
             else:
                 return value
 
-    def _unary(self) -> float:
+    def _unary(self) -> Value:
         c = self._peek()
         if c == "-":
             self.pos += 1
-            return -self._unary()
+            value = self._unary()
+            if isinstance(value, str):
+                raise ExprError("unary '-' is not supported for strings")
+            return -value
         if c == "+":
             self.pos += 1
             return self._unary()
@@ -186,27 +237,49 @@ class _Parser:
             return suffix
         return None
 
-    def _postfix(self, value: float) -> float:
+    def _postfix(self, value: Value) -> Value:
         """Postfix .s/.m/.ms - a unit *view* onto a value already stored in
         seconds (X.s == X, X.m == X/60, X.ms == X*1000). Applies uniformly to
         timers (t.s, _t.ms, a `var`-bound timer()'s .s) and to any other
-        expression, since nothing about it is really "attribute access" -
-        it's three fixed, always-available postfix operators."""
+        numeric expression, since nothing about it is really "attribute
+        access" - it's three fixed, always-available postfix operators. A
+        string has no time-unit view; matching the suffix but then rejecting
+        it (rather than silently leaving it unconsumed) gives a clear error
+        instead of a confusing "unexpected trailing input"."""
         save = self.pos
         self._skip_ws()
         if self.pos < len(self.text) and self.text[self.pos] == ".":
             unit = self._match_time_unit(self.pos + 1)
             if unit is not None:
+                if isinstance(value, str):
+                    raise ExprError(f"'.{unit}' is not supported for strings")
                 self.pos += 1 + len(unit)
                 return value / _TIME_UNITS[unit]
         self.pos = save
         return value
 
-    def _atom(self) -> float:
+    def _parse_string_literal(self) -> str:
+        """A quoted string atom - no escape sequences (a stated design
+        decision, not an accident: this language favors simplicity over
+        punctuation everywhere else too), so a literal `"` can't appear
+        inside a string at all."""
+        start = self.pos
+        self.pos += 1  # opening quote
+        while self.pos < len(self.text) and self.text[self.pos] != '"':
+            self.pos += 1
+        if self.pos >= len(self.text):
+            raise ExprError(f"unterminated string literal starting at position {start}")
+        value = self.text[start + 1 : self.pos]
+        self.pos += 1  # closing quote
+        return value
+
+    def _atom(self) -> Value:
         self._skip_ws()
         if self.pos >= len(self.text):
             raise ExprError("unexpected end of expression")
         c = self.text[self.pos]
+        if c == '"':
+            return self._postfix(self._parse_string_literal())
         if c == "(":
             self.pos += 1
             value = self._or()
@@ -244,20 +317,25 @@ class _Parser:
                 self.pos += 1
                 if name not in _FUNCTIONS:
                     raise ExprError(f"unknown function '{name}'")
-                return self._postfix(float(_FUNCTIONS[name](*args)))
+                try:
+                    result = _FUNCTIONS[name](*args)
+                except TypeError as exc:
+                    raise ExprError(f"function '{name}' got an invalid argument type: {exc}") from None
+                return self._postfix(result if isinstance(result, str) else float(result))
             if name in self.variables:
-                return self._postfix(float(self.variables[name]))
+                value = self.variables[name]
+                return self._postfix(value if isinstance(value, str) else float(value))
             if name in _CONSTANTS:
                 return self._postfix(_CONSTANTS[name])
             raise ExprError(f"unknown identifier '{name}'")
         raise ExprError(f"unexpected character '{c}' at position {self.pos}")
 
 
-def evaluate(expression: str, variables: dict) -> float:
+def evaluate(expression: str, variables: dict) -> Value:
     return _Parser(expression, variables).parse()
 
 
-def parse_one(text: str, variables: dict) -> tuple[float, int]:
+def parse_one(text: str, variables: dict) -> tuple[Value, int]:
     """Parses a single expression (including and/or/not/comparisons)
     starting at text[0] WITHOUT requiring the rest of the string to be
     consumed - unlike evaluate(), for embedding inside a larger grammar

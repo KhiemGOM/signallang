@@ -1,6 +1,6 @@
 import pytest
 
-from signallang.ast_nodes import Assign, ExprSpan, For, If, LiveBlock, Repeat, Send, StringLit, VarDecl
+from signallang.ast_nodes import Assign, ExprSpan, For, If, LiveBlock, Repeat, Send, VarDecl
 from signallang.errors import ScriptError
 from signallang.parser import parse
 
@@ -32,8 +32,16 @@ def test_reassign_without_prior_var_is_a_field_assign():
 
 
 def test_string_literal():
+    # a bare string literal is just an ExprSpan now - expr.py evaluates
+    # the quoted text like any other atom (see test_expr.py for the
+    # string-value semantics themselves: concatenation, comparison, etc.)
     prog = parse('frame_id = "map";')
-    assert prog.body[0].value == StringLit("map")
+    assert prog.body[0].value == ExprSpan('"map"')
+
+
+def test_string_concatenation_is_a_plain_expr_span():
+    prog = parse('frame_id = "prefix_" + suffix;')
+    assert prog.body[0].value == ExprSpan('"prefix_" + suffix')
 
 
 def test_if_else():

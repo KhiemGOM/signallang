@@ -98,6 +98,61 @@ def test_terop_dead_branch_still_raises():
         evaluate("terop(1 == 1, 1, 1/0)", {})
 
 
+# -- strings ---------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "expr, variables, expected",
+    [
+        ('"map"', {}, "map"),
+        ('"a" + "b"', {}, "ab"),
+        ('"prefix_" + suffix', {"suffix": "odom"}, "prefix_odom"),
+        ('frame + "_link"', {"frame": "base"}, "base_link"),
+        ('"a" == "a"', {}, 1.0),
+        ('"a" == "b"', {}, 0.0),
+        ('"a" != "b"', {}, 1.0),
+        ('"a" < "b"', {}, 1.0),
+        ('"b" <= "b"', {}, 1.0),
+        ('"b" > "a"', {}, 1.0),
+        # mismatched types are never equal - no error, just false/true,
+        # same as Python's own `1 == "1"`.
+        ('"5" == 5', {}, 0.0),
+        ('"5" != 5', {}, 1.0),
+        ('"" and true', {}, 0.0),  # empty string is falsy
+        ('"x" and true', {}, 1.0),  # non-empty string is truthy
+        ('not ""', {}, 1.0),
+        ('terop(status == "ok", 1, 0)', {"status": "ok"}, 1.0),
+        ('terop(true, "a", "b")', {}, "a"),
+        ('min("b", "a")', {}, "a"),
+        ('max("b", "a")', {}, "b"),
+    ],
+)
+def test_string_values(expr, variables, expected):
+    assert evaluate(expr, variables) == expected
+
+
+@pytest.mark.parametrize(
+    "expr, variables",
+    [
+        ('"a" - "b"', {}),
+        ('"a" * "b"', {}),
+        ('"a" / "b"', {}),
+        ('"a" % "b"', {}),
+        ('-("a")', {}),
+        ('"a" + 1', {}),
+        ('1 + "a"', {}),
+        ('"a" < 1', {}),
+        ('1 < "a"', {}),
+        ('"a".s', {}),
+        ('sin("a")', {}),
+        ('min("a", 1)', {}),
+        ('"unterminated', {}),
+    ],
+)
+def test_string_type_errors(expr, variables):
+    with pytest.raises(ExprError):
+        evaluate(expr, variables)
+
+
 # -- safety: never actually executes anything ------------------------------
 
 @pytest.mark.parametrize(

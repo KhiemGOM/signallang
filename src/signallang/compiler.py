@@ -21,7 +21,6 @@ from .ast_nodes import (
     Reassign,
     Repeat,
     Send,
-    StringLit,
     TimerDecl,
     TimerReset,
     VarDecl,
@@ -44,7 +43,7 @@ class SetVar:
 @dataclass
 class SetField:
     path: list  # [] means the whole msg
-    value: object  # ExprSpan | StringLit | Default | ArrayLit | LiveBinding
+    value: object  # ExprSpan | Default | ArrayLit | LiveBinding
 
 
 @dataclass
@@ -144,7 +143,7 @@ class Compiler:
     # -- values (recursive - arrays and live blocks can nest) -----------
 
     def _compile_value(self, v):
-        if isinstance(v, (ExprSpan, StringLit, Default)):
+        if isinstance(v, (ExprSpan, Default)):
             return v
         if isinstance(v, ArrayLit):
             return ArrayLit([self._compile_value(e) for e in v.elements])
