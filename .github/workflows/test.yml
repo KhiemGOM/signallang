@@ -1,0 +1,35 @@
+name: test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[test]"
+      - run: pytest -v
+      - name: verify zero ROS dependency
+        run: |
+          if grep -rlE '\brclpy\b|\bros2\b' src/signallang; then
+            echo "found a ROS reference inside the core package" >&2
+            exit 1
+          fi
+      - name: verify time.sleep/monotonic stay confined to realtime.py
+        run: |
+          hits=$(grep -rl 'time\.sleep\|time\.monotonic' src/signallang || true)
+          stray=$(echo "$hits" | grep -v 'realtime.py$' || true)
+          if [ -n "$stray" ]; then
+            echo "real-time call found outside realtime.py: $stray" >&2
+            exit 1
+          fi

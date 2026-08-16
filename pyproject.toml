@@ -10,10 +10,34 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
 authors = [{ name = "khiemgom" }]
+keywords = ["dsl", "scripting-language", "synthetic-data", "pub-sub", "testing", "signal-generator", "ros2"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Interpreters",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Networking",
+    "Typing :: Typed",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/KhiemGOM/signallang"
+Repository = "https://github.com/KhiemGOM/signallang"
+Issues = "https://github.com/KhiemGOM/signallang/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+signallang = ["py.typed"]
