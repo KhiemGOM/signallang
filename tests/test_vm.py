@@ -71,6 +71,98 @@ def test_t_and_underscore_t_latching_timer_semantics():
     assert [round(r.value["x"], 3) for r in results] == [0.0, 1.0, 0.0, 1.0]
 
 
+def test_live_static_persists_across_ticks():
+    src = """
+    data = live {
+        static value = 0;
+        value = value + 1;
+        return value;
+    };
+    send hz 1 dur 4t;
+    """
+    results, _ = run_all(src)
+    assert [r.value["data"] for r in results] == [1.0, 2.0, 3.0, 4.0]
+
+
+def test_live_static_resets_when_binding_is_rebound():
+    # same reset-on-rebind rule as _t: re-executing the assignment
+    # statement (here, once per repeat lap) starts the static over.
+    src = """
+    repeat 2 {
+        data = live {
+            static value = 0;
+            value = value + 1;
+            return value;
+        };
+        send hz 1 dur 2t;
+    }
+    """
+    results, _ = run_all(src)
+    assert [r.value["data"] for r in results] == [1.0, 2.0, 1.0, 2.0]
+
+
+def test_live_static_can_be_reassigned_conditionally_inside_if():
+    # the restriction is on where `static NAME = init;` may appear (top
+    # level only) - reading/reassigning an already-declared static from
+    # inside if/else is ordinary and unrestricted.
+    src = """
+    data = live {
+        static value = 0;
+        if t < 1.5 {
+            value = value + 1;
+        } else {
+            value = value - 1;
+        }
+        return value;
+    };
+    send hz 1 dur 4t;
+    """
+    results, _ = run_all(src)
+    assert [r.value["data"] for r in results] == [1.0, 2.0, 1.0, 0.0]
+
+
+def test_live_static_two_bindings_do_not_share_storage():
+    # two separate live blocks, each with their own `static value`, must
+    # not collide just because they happen to use the same local name.
+    src = """
+    a = live {
+        static value = 0;
+        value = value + 1;
+        return value;
+    };
+    b = live {
+        static value = 100;
+        value = value + 10;
+        return value;
+    };
+    send hz 1 dur 2t;
+    """
+    results, _ = run_all(src)
+    assert [r.value["a"] for r in results] == [1.0, 2.0]
+    assert [r.value["b"] for r in results] == [110.0, 120.0]
+
+
+def test_live_static_random_walk_pattern():
+    # the motivating use case: a random walk built entirely in userland,
+    # no dedicated builtin - just noise() plus a persisted accumulator.
+    # Not a determinism test (noise() is genuinely random); just confirms
+    # it accumulates rather than resetting to a fresh draw each tick.
+    src = """
+    walk = live {
+        static value = 0;
+        value = value + noise(0, 0.01);
+        return value;
+    };
+    send hz 1 dur 20t;
+    """
+    results, _ = run_all(src)
+    values = [r.value["walk"] for r in results]
+    running = 0.0
+    for v in values:
+        assert abs(v - running) < 1.0  # each step is one small noise() draw, not a fresh unrelated value
+        running = v
+
+
 def test_timer_reset_zeros_eager_timer_immediately():
     src = "var mt = timer();\nsend hz 1 dur 1t;\nmt.reset();\ndata = mt.s;\nsend hz 1 dur 1t;"
     results, _ = run_all(src)

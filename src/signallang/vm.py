@@ -21,6 +21,7 @@ from .compiler import (
     LiveBinding,
     LiveIf,
     LiveSetVar,
+    LiveStaticSetVar,
     ResetTimer,
     SendInstr,
     SetField,
@@ -54,6 +55,13 @@ class ScriptRun:
         self.master_t = 0.0
         self.vars: dict = {}
         self.timers: dict = {}  # name -> TimerState; "__live_*" names are private per-binding _t's
+        # timer_name -> {static var name -> current value}; persists across
+        # every tick's re-evaluation of that live binding (mutated in place,
+        # same "no write-back needed" trick as self.vars), reinitialized
+        # from scratch each time the binding's own LiveBinding is (re)bound
+        # in _apply_field - same key, same reset schedule as that binding's
+        # own _t, deliberately, rather than tracking a second identity.
+        self.statics: dict = {}
         # With a schema, the message starts fully defaulted - the same
         # tree default_at([]) already builds for an explicit `msg =
         # default;` statement, just applied automatically at run start
@@ -261,6 +269,9 @@ class ScriptRun:
         key = tuple(path)
         if isinstance(value, LiveBinding):
             self.live_bindings[key] = value
+            # Each static's init evaluates once, right now - the same
+            # instant this binding's own _t (re)latches - never per tick.
+            self.statics[value.timer_name] = {name: self._eval(init) for name, init in value.static_inits}
             return
         self.live_bindings.pop(key, None)
         if isinstance(value, ExprSpan):
@@ -346,13 +357,16 @@ class ScriptRun:
 
     def _eval_live_block(self, binding: LiveBinding) -> expr.Value:
         local_vars: dict = {}
+        statics = self.statics.get(binding.timer_name, {})
 
         def eval_span(span: ExprSpan) -> expr.Value:
-            return self._eval(span, live_timer_name=binding.timer_name, extra=local_vars)
+            return self._eval(span, live_timer_name=binding.timer_name, extra={**statics, **local_vars})
 
         def exec_stmt(s) -> None:
             if isinstance(s, LiveSetVar):
                 local_vars[s.name] = eval_span(s.expr)
+            elif isinstance(s, LiveStaticSetVar):
+                statics[s.name] = eval_span(s.expr)
             elif isinstance(s, LiveIf):
                 branch = s.then_body if expr.is_truthy(eval_span(s.cond)) else s.else_body
                 for x in branch:

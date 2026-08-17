@@ -34,6 +34,18 @@ def test_linear_desugars_to_live_block_with_created_timer():
     assert kinds[1] == "SetField"
 
 
+def test_live_block_static_is_pulled_out_of_body_into_static_inits():
+    src = "data = live {\n static value = 0;\n value = value + 1;\n return value;\n};\nsend;"
+    instrs = compile_program(parse(src))
+    set_field = [i for i in instrs if type(i).__name__ == "SetField"][0]
+    binding = set_field.value
+    assert [n for n, _ in binding.static_inits] == ["value"]
+    assert binding.static_inits[0][1].text == "0"
+    # only the reassignment remains in body, compiled to LiveStaticSetVar,
+    # not the declaration itself
+    assert [type(s).__name__ for s in binding.body] == ["LiveStaticSetVar"]
+
+
 def test_send_variants_compile_to_one_send_instruction_each():
     for src, expected_kind, expected_val in [
         ("send hz 10 dur 4.5s;", "wall", 4.5),

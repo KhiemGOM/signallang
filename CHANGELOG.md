@@ -6,6 +6,25 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `static name = expr;` inside a `live` block: a local whose value
+  persists across every tick's re-evaluation of the block, instead of
+  starting over each tick like a plain `var` local. `expr` evaluates
+  once, at the same instant the block's own `_t` (re-)latches, not per
+  tick; later `name = expr;` statements in the same block read and
+  write that persisted value directly (reassignment may happen
+  conditionally inside `if`/`else` - only the declaration itself is
+  restricted to the block's top level, since it initializes
+  unconditionally). Resets on the same schedule as `_t` - a loop-bound
+  live block's statics start over each lap the assignment statement
+  re-executes. Reuses the exact per-binding identity `_t` already has
+  internally (`vm.py`'s `timer_name`) as the key into a new
+  `self.statics` dict, rather than minting a second one - no new
+  instruction type needed, since it initializes at exactly the point
+  `_t`'s own `CreateTimer` already fires. Requested as the general
+  primitive behind any tick-to-tick-memory pattern rather than a
+  dedicated `random_walk` builtin: a random walk is just `noise()` plus
+  a persisted accumulator now, and the same primitive covers
+  accumulators, integrators, and debouncing for free.
 - Three new signal-shape builtins, same pure-function-of-elapsed-time
   shape as `square`/`linear`/etc., part of `TIME_SHAPED_FUNCTIONS` (so
   `!` sugar injects `_t` as the first argument): `pulse(t, low, high,

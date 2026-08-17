@@ -21,6 +21,8 @@ from .ast_nodes import (
     Reassign,
     Repeat,
     Send,
+    StaticDecl,
+    StaticReassign,
     TimerDecl,
     TimerReset,
     VarDecl,
@@ -56,13 +58,29 @@ class SetField:
 
 @dataclass
 class LiveBinding:
-    body: list  # list[LiveSetVar | LiveIf]
+    body: list  # list[LiveSetVar | LiveStaticSetVar | LiveIf]
     return_expr: ExprSpan
     timer_name: str
+    # (name, init_expr) pairs, pulled out of body entirely - each evaluates
+    # once, at the same moment timer_name's own CreateTimer (re)fires, into
+    # persistent per-binding storage the VM keeps keyed by timer_name (that
+    # id is already unique per live block and already resets on the right
+    # schedule, so it's reused rather than minting a second one).
+    static_inits: list
 
 
 @dataclass
 class LiveSetVar:
+    name: str
+    expr: ExprSpan
+
+
+@dataclass
+class LiveStaticSetVar:
+    """Same as LiveSetVar, but the write targets the live binding's
+    persistent static storage (self.statics[timer_name] in vm.py)
+    instead of the per-tick-fresh local scope."""
+
     name: str
     expr: ExprSpan
 
@@ -160,13 +178,16 @@ class Compiler:
         if isinstance(v, LiveBlock):
             timer_name = self._next_name("live")
             self._emit(CreateTimer(timer_name, "latching"))
-            body = [self._compile_live_stmt(s) for s in v.body]
-            return LiveBinding(body=body, return_expr=v.return_expr, timer_name=timer_name)
+            static_inits = [(s.name, s.value) for s in v.body if isinstance(s, StaticDecl)]
+            body = [self._compile_live_stmt(s) for s in v.body if not isinstance(s, StaticDecl)]
+            return LiveBinding(body=body, return_expr=v.return_expr, timer_name=timer_name, static_inits=static_inits)
         raise ScriptError(f"internal: unknown value {v!r}")
 
     def _compile_live_stmt(self, s):
         if isinstance(s, (VarDecl, Reassign)):
             return LiveSetVar(s.name, s.value)
+        if isinstance(s, StaticReassign):
+            return LiveStaticSetVar(s.name, s.value)
         if isinstance(s, If):
             return LiveIf(
                 s.cond,

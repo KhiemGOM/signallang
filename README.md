@@ -345,6 +345,43 @@ field = live { <statements> return <expr>; };
 may declare local variables (`var`) and branch (`if`/`else`); it may not
 assign to an outer variable or a message field.
 
+**`static` locals**
+
+```
+field = live {
+    static value = 0;
+    value = value + noise(0, 1);
+    return value;
+};
+```
+
+`static name = expr;` declares a local whose value persists across every
+tick's re-evaluation of the block, instead of starting over each tick
+like a plain `var` local. `expr` evaluates exactly once — at the moment
+the block's own `_t` is (re-)created, not per tick — and every later
+`name = expr;` inside the same block reads and writes that same
+persisted value. Only valid at the top level of a `live` block's body,
+not nested inside `if`/`else` — a `static` initializes once, unconditionally,
+never depending on some tick's branch. Resets on the same schedule as
+`_t`: if the enclosing assignment statement sits inside a loop, each
+lap's (re-)execution of that statement starts the static over, same as
+`_t` restarting each lap. A `static` name shares the block's own
+variable namespace and cannot collide with a `var` local declared in
+the same block, exactly like two `var` locals can't collide with each
+other.
+
+This is the general primitive behind any pattern that needs memory
+across ticks — a random walk is just `noise()` plus a persisted
+accumulator, with no dedicated builtin needed:
+
+```
+walk = live {
+    static value = 0;
+    value = value + noise(0, 1);
+    return value;
+};
+```
+
 **`live` shorthand**
 
 ```

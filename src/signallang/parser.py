@@ -20,6 +20,8 @@ from .ast_nodes import (
     Reassign,
     Repeat,
     Send,
+    StaticDecl,
+    StaticReassign,
     TimerDecl,
     TimerReset,
     VarDecl,
@@ -48,6 +50,7 @@ _KEYWORDS = frozenset(
         "latching_timer",
         "reset",
         "msg",
+        "static",
     }
 )
 
@@ -86,6 +89,7 @@ class Parser:
         self.text = _strip_comments(text)
         self.pos = 0
         self.known_vars: set = set()
+        self.static_names: set = set()  # live-block statics currently in scope
 
     # -- low-level helpers --------------------------------------------------
 
@@ -537,13 +541,16 @@ class Parser:
         if self._peek_char() == "{":
             self._expect_char("{")
             saved_known = self.known_vars
+            saved_static = self.static_names
             self.known_vars = set()  # live blocks can only write their own locals
+            self.static_names = set()
             body = self._parse_block_until_return()
             self._advance_word("return")
             ret = self._scan_expr_span(";")
             self._expect_char(";")
             self._expect_char("}")
             self.known_vars = saved_known
+            self.static_names = saved_static
             return LiveBlock(body=body, return_expr=ret)
         # shorthand: `live <expr>;` desugars to `live { return <expr>; };` -
         # same LiveBlock AST (empty body, no locals), for the common case
@@ -557,26 +564,47 @@ class Parser:
             self._skip_ws()
             if self._looking_at_word("return"):
                 break
-            stmts.append(self._parse_live_stmt())
+            stmts.append(self._parse_live_stmt(top_level=True))
         return stmts
 
-    def _parse_live_stmt(self):
+    def _parse_live_stmt(self, top_level: bool = True):
         self._skip_ws()
+        if self._looking_at_word("static"):
+            if not top_level:
+                raise ScriptError(
+                    "'static' is only allowed at the top level of a live block, "
+                    "not inside if/else - it initializes once, when the block itself "
+                    "is (re)bound, not conditionally on some tick's branch",
+                    self.pos,
+                )
+            return self._parse_static_decl()
         if self._looking_at_word("var"):
             return self._parse_var_decl()
         if self._looking_at_word("if"):
-            return self._parse_if(self._parse_live_stmt)
+            return self._parse_if(lambda: self._parse_live_stmt(top_level=False))
         name = self._parse_ident()
         self._expect_char("=")
         value = self._scan_expr_span(";")
         self._expect_char(";")
+        if name in self.static_names:
+            return StaticReassign(name=name, value=value)
         if name not in self.known_vars:
             raise ScriptError(
                 f"a live block can't write to '{name}' - only its own locals "
-                "declared with var inside this same block (no outer vars, no message fields)",
+                "declared with var or static inside this same block (no outer vars, no message fields)",
                 self.pos,
             )
         return Reassign(name=name, value=value)
+
+    def _parse_static_decl(self):
+        self._advance_word("static")
+        name = self._parse_ident()
+        self._expect_char("=")
+        value = self._scan_expr_span(";")
+        self._expect_char(";")
+        self._declare_var(name)
+        self.static_names.add(name)
+        return StaticDecl(name=name, value=value)
 
     def _try_parse_bang_call(self, stop_chars: str, stop_at_send_modifiers: bool):
         """`name!(args)` - live-call sugar, recognized only as the WHOLE

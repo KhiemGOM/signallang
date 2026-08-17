@@ -26,7 +26,7 @@ class ArrayLit:
 
 @dataclass
 class LiveBlock:
-    body: list  # list[VarDecl | Assign(local var only) | If] - no Send/loops/msg-field writes
+    body: list  # list[VarDecl | Reassign | StaticDecl | StaticReassign | If] - no Send/loops/msg-field writes
     return_expr: ExprSpan
 
 
@@ -60,6 +60,31 @@ class TimerReset:
 
 @dataclass
 class Reassign:
+    name: str
+    value: ExprSpan
+
+
+@dataclass
+class StaticDecl:
+    """`static name = expr;` - only valid at the top level of a `live`
+    block's body (not nested inside if/else). `value` evaluates once,
+    at the same moment the block's own `_t` is (re)created - not once
+    per tick, unlike everything else in the block's body. Compiled out
+    of the body entirely into the live binding's own init step; see
+    compiler.py's LiveBinding.static_inits."""
+
+    name: str
+    value: ExprSpan
+
+
+@dataclass
+class StaticReassign:
+    """`name = expr;` inside a `live` block, where `name` was declared
+    with `static` rather than `var` - same surface syntax as Reassign,
+    a distinct node only so the compiler can route the write into the
+    live binding's persistent static storage instead of the ordinary
+    per-tick-fresh local scope."""
+
     name: str
     value: ExprSpan
 

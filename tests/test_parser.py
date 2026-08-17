@@ -1,6 +1,17 @@
 import pytest
 
-from signallang.ast_nodes import Assign, ExprSpan, For, If, LiveBlock, Repeat, Send, VarDecl
+from signallang.ast_nodes import (
+    Assign,
+    ExprSpan,
+    For,
+    If,
+    LiveBlock,
+    Repeat,
+    Send,
+    StaticDecl,
+    StaticReassign,
+    VarDecl,
+)
 from signallang.errors import ScriptError
 from signallang.parser import parse
 
@@ -232,6 +243,36 @@ def test_live_block_with_locals_and_if():
 def test_live_block_cannot_write_undeclared_name():
     with pytest.raises(ScriptError):
         parse("x = live {\n outer_var = 5;\n return outer_var;\n};")
+
+
+def test_live_block_static_decl_and_reassign():
+    src = "x = live {\n static value = 0;\n value = value + 1;\n return value;\n};"
+    prog = parse(src)
+    node = prog.body[0].value
+    assert isinstance(node, LiveBlock)
+    assert node.body == [
+        StaticDecl(name="value", value=ExprSpan("0")),
+        StaticReassign(name="value", value=ExprSpan("value + 1")),
+    ]
+
+
+def test_live_block_static_cannot_collide_with_var():
+    with pytest.raises(ScriptError):
+        parse("x = live {\n var a = 1;\n static a = 2;\n return a;\n};")
+    with pytest.raises(ScriptError):
+        parse("x = live {\n static a = 1;\n var a = 2;\n return a;\n};")
+
+
+def test_live_block_static_not_allowed_nested_in_if():
+    with pytest.raises(ScriptError):
+        parse("x = live {\n if t > 0 {\n static a = 1;\n }\n return 1;\n};")
+
+
+def test_live_block_static_scope_does_not_leak_across_blocks():
+    # a static declared in one live block must not make a bare reassignment
+    # to the same name legal in a later, unrelated live block.
+    with pytest.raises(ScriptError):
+        parse("a = live {\n static v = 0;\n return v;\n};\nb = live {\n v = 1;\n return v;\n};")
 
 
 def test_bang_call_desugars_to_live_block():
