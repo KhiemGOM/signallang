@@ -1,6 +1,6 @@
 import pytest
 
-from signallang import DictSchemaProvider, ScriptError, compile_script
+from signallang import DictSchemaProvider, ExprError, ScriptError, compile_script
 
 
 def run_all(src, limit=10_000, schema_provider=None):
@@ -285,6 +285,52 @@ def test_msg_access_is_deep_copied_not_aliased():
 def test_msg_is_reserved_and_cannot_be_a_var_name():
     with pytest.raises(ScriptError):
         run_all("var msg = 5;")
+
+
+# -- bare-name sugar for a top-level msg field --------------------------
+
+def test_bare_name_reads_a_top_level_msg_field_when_unambiguous():
+    src = "angular = 5;\ndata = angular + 1;\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 6.0
+
+
+def test_var_shadows_the_bare_name_sugar():
+    src = "angular = 5;\nvar angular = 100;\ndata = angular;\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 100.0
+
+
+def test_explicit_msg_dot_still_reaches_a_shadowed_field():
+    src = "angular = 5;\nvar angular = 100;\ndata = msg.angular;\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 5.0
+
+
+def test_bare_name_sugar_does_not_apply_to_nested_fields():
+    # two different paths could share a leaf name (linear.x, angular.x) -
+    # only top-level fields get the sugar, never a nested one. This
+    # errors during expression evaluation (ExprError), not parsing.
+    src = 'header = json { frame_id: "map" };\ndata = frame_id;\nsend hz 1 dur 1t;'
+    with pytest.raises(ExprError):
+        run_all(src)
+
+
+def test_bare_name_sugar_does_not_shadow_a_builtin_or_constant_name():
+    # a field literally named "sin" or "pi" stays reachable only via
+    # msg.sin / msg.pi - the reserved-name set wins the same way it
+    # already does for var/for-loop declarations.
+    src = "sin = 5;\ndata = msg.sin;\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 5.0
+    with pytest.raises(ExprError):
+        run_all("sin = 5;\ndata = sin;\nsend hz 1 dur 1t;")
+
+
+def test_bare_name_sugar_reflects_schema_auto_filled_defaults():
+    schema = DictSchemaProvider({"temperature": 0.0, "variance": 0.0})
+    results, _ = run_all("variance = temperature + 5;\nsend hz 1 dur 1t;", schema_provider=schema)
+    assert results[0].value["variance"] == 5.0
 
 
 # -- assigning into a var-held array/object -----------------------------

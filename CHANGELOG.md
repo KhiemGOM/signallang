@@ -45,6 +45,16 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   independent deep copy, so a `var` that captures part of it is never
   later affected by an unrelated field write reusing the same nested
   dict in place.
+- Bare-name sugar for a top-level `msg` field: `angular` reads
+  `msg.angular`, but only when nothing else already claims that name -
+  a `var`, `t`/`_t`, a timer, or a built-in function/constant name all
+  win outright and silently, with no ambiguity error. A `var` declared
+  after the field was written takes the bare name over from that point
+  on; the field stays reachable, only now by writing `msg.angular`
+  explicitly. Never applies to a nested field (`header.frame_id`),
+  since two different paths could share a leaf name (`linear.x`,
+  `angular.x`), which would make a bare name genuinely ambiguous rather
+  than merely shadowed.
 
 ### Fixed
 - A `var` or `for` loop variable could silently shadow anything: an

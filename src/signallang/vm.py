@@ -166,6 +166,18 @@ class ScriptRun:
             scope[name] = self._timer_value(ts)
         if live_timer_name is not None:
             scope["_t"] = self._timer_value(self.timers[live_timer_name])
+        # Bare-name sugar for a top-level message field: `angular` reads
+        # `msg.angular`, but only when nothing else already claims that
+        # name - a var, t/_t, a timer, or a language constant all win
+        # outright, silently, with no error (that's the whole point: the
+        # sugar only ever fills a genuine gap). Once shadowed, the
+        # explicit `msg.angular` form still always works. Only top-level
+        # fields get this - a nested field never does, since two
+        # different paths sharing a leaf name (linear.x, angular.x)
+        # would make a bare `x` genuinely ambiguous, not just shadowed.
+        for name, value in scope["msg"].items():
+            if name not in scope and name not in expr.RESERVED_NAMES:
+                scope[name] = value
         return scope
 
     def _eval(self, span: ExprSpan, live_timer_name: str | None = None, extra: dict | None = None) -> expr.Value:

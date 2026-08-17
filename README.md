@@ -270,6 +270,26 @@ present) but not a field still driven by an unresolved `live` binding.
 independent snapshot, so capturing part of it in a `var` (`var h =
 msg.header;`) is never later affected by an unrelated field write.
 
+A bare name is sugar for a top-level field of `msg` — `angular` reads
+`msg.angular` — but only when nothing else already claims that name in
+the current scope: not a `var`, not `t`/`_t`, not a timer, not a
+built-in function or constant name. A `var` declared after the field
+was written takes over the bare name outright, with no error; the field
+itself is still reachable, but only by writing `msg.angular` explicitly
+from that point on. A nested field never gets this sugar (`frame_id`
+inside `header` is never bare-readable) — two different paths could
+share a leaf name (`linear.x`, `angular.x`), which would make a bare
+name genuinely ambiguous rather than merely shadowed.
+
+```
+angular = 5;
+data = angular + 1;        # 6.0 - bare name, unambiguous
+
+var angular = 100;
+data = angular;             # 100.0 - the var wins, silently
+data = msg.angular;         # 5.0 - still reachable, now only explicitly
+```
+
 ### Control flow
 
 ```
