@@ -5,16 +5,17 @@ import random
 from typing import Callable, Union
 
 
-Value = Union[float, str, list, dict]
+Value = Union[float, bool, str, list, dict]
 
 
 def is_truthy(value: Value) -> bool:
     """The one truthiness rule for and/or/not, terop's cond, and if/repeat
-    conditions: plain Python truthiness (0.0/""/[]/{} are falsy, anything
-    else truthy), made explicit rather than left to a bare `value != 0.0`
-    comparison, which is wrong for a non-float value - a str is never ==
-    or != a float, so that check would call every string truthy, empty or
-    not, and the same problem would recur for every future value type."""
+    conditions: plain Python truthiness (0.0/False/""/[]/{} are falsy,
+    anything else truthy), made explicit rather than left to a bare
+    `value != 0.0` comparison, which is wrong for a non-float value - a
+    str is never == or != a float, so that check would call every string
+    truthy, empty or not, and the same problem would recur for every
+    other value type."""
     return bool(value)
 
 
@@ -214,7 +215,7 @@ _FUNCTIONS: dict[str, Callable[..., Value]] = {
     # "fix your unreached branch too" rather than a silent trap.
     "terop": _terop,
 }
-_CONSTANTS = {"pi": math.pi, "e": math.e, "true": 1.0, "false": 0.0}
+_CONSTANTS = {"pi": math.pi, "e": math.e, "true": True, "false": False}
 # Every built-in function and constant name - reserved so a var or
 # for-loop variable can never shadow one. Without this, `var linear = 5;`
 # would silently work, but then `linear(...)`/`linear!(...)` inside the
@@ -257,6 +258,11 @@ class ExprError(ValueError):
 
 
 def _type_name(value: Value) -> str:
+    # bool is checked first deliberately - Python's bool is an int
+    # subclass (isinstance(True, int) is True), so a later int-vs-float
+    # split needs this ordering to keep bool from being misreported.
+    if isinstance(value, bool):
+        return "bool"
     if isinstance(value, str):
         return "string"
     if isinstance(value, list):
@@ -334,7 +340,7 @@ class _Parser:
         while self._looking_at_word("or"):
             self.pos += 2
             right = self._and()
-            value = 1.0 if (is_truthy(value) or is_truthy(right)) else 0.0
+            value = is_truthy(value) or is_truthy(right)
         return value
 
     def _and(self) -> Value:
@@ -342,14 +348,14 @@ class _Parser:
         while self._looking_at_word("and"):
             self.pos += 3
             right = self._not()
-            value = 1.0 if (is_truthy(value) and is_truthy(right)) else 0.0
+            value = is_truthy(value) and is_truthy(right)
         return value
 
     def _not(self) -> Value:
         if self._looking_at_word("not"):
             self.pos += 3
             value = self._not()
-            return 0.0 if is_truthy(value) else 1.0
+            return not is_truthy(value)
         return self._comparison()
 
     def _comparison(self) -> Value:
@@ -359,21 +365,35 @@ class _Parser:
         `a > 1 and b > 2` parses as `(a > 1) and (b > 2)`. `==`/`!=` work
         between any two values (a str is simply never equal to a float,
         same as Python) - `< <= > >=` require both sides to be the same
-        type (both numbers, or both strings - lexicographic ordering),
-        otherwise it's a clear error rather than a raw TypeError."""
+        orderable type (both numbers - never bool, which is a distinct
+        type here despite Python's own bool-is-an-int - or both strings,
+        lexicographic ordering), otherwise it's a clear error. This can't
+        rely on catching a TypeError from Python's own operators the way
+        `==`/`!=` do: Python's list and bool both define working `<`/`>`
+        (list lexicographically, bool via its int-subclass semantics),
+        so `[1] < [2]` or `true < false` would silently succeed with no
+        exception to catch - the type check below has to happen first,
+        explicitly, not after the fact."""
         left = self._expr()
         self._skip_ws()
         for op in _COMPARISON_OPS:
             if self.text[self.pos : self.pos + len(op)] == op:
                 self.pos += len(op)
                 right = self._expr()
-                try:
+                if op in ("==", "!="):
                     result = _COMPARISONS[op](left, right)
-                except TypeError:
-                    raise ExprError(
-                        f"cannot compare {_type_name(left)} and {_type_name(right)} with '{op}'"
-                    ) from None
-                return 1.0 if result else 0.0
+                else:
+                    numbers = (
+                        isinstance(left, float)
+                        and not isinstance(left, bool)
+                        and isinstance(right, float)
+                        and not isinstance(right, bool)
+                    )
+                    strings = isinstance(left, str) and isinstance(right, str)
+                    if not (numbers or strings):
+                        raise ExprError(f"cannot compare {_type_name(left)} and {_type_name(right)} with '{op}'")
+                    result = _COMPARISONS[op](left, right)
+                return bool(result)
         return left
 
     def _expr(self) -> Value:
@@ -735,9 +755,13 @@ class _Parser:
                 except (ValueError, ZeroDivisionError) as exc:
                     raise ExprError(f"function '{name}' failed: {exc}") from None
                 # floor()/ceil() return a plain int, not float - normalize
-                # that; str/list/dict (terop can produce any Value) pass
-                # through untouched.
-                if not isinstance(result, (str, list, dict)):
+                # that; str/list/dict/bool (terop can produce any Value,
+                # including one built from a comparison) pass through
+                # untouched. bool must be excluded explicitly here even
+                # though it isn't in that tuple - float(True) would
+                # silently turn it back into 1.0, undoing terop's own
+                # result the moment it flows back through a call.
+                if not isinstance(result, (str, list, dict, bool)):
                     result = float(result)
                 result = self._apply_pending_postfix(result, pending)
                 # _consume_call_postfix_chain only understands .shift/
@@ -751,8 +775,11 @@ class _Parser:
                 # callers (e.g. tests, or vm.py's own scope dict) may
                 # hand in a plain int for a numeric variable - coerce
                 # that to float, same as every literal in this language
-                # already is, without touching str/list/dict.
-                if isinstance(value, int):
+                # already is, without touching str/list/dict/bool. bool
+                # must be excluded explicitly: Python's bool is an int
+                # subclass, so this check would otherwise also catch a
+                # genuine bool value and flatten it back to 1.0/0.0.
+                if isinstance(value, int) and not isinstance(value, bool):
                     value = float(value)
                 return self._postfix(value)
             if name in _CONSTANTS:

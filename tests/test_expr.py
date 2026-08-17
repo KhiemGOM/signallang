@@ -74,6 +74,88 @@ def test_boolean_operators(expr, variables, expected):
     assert evaluate(expr, variables) == pytest.approx(expected)
 
 
+# -- bool is a real type, not disguised 1.0/0.0 -----------------------------
+
+@pytest.mark.parametrize(
+    "expr, expected",
+    [
+        ("true", True),
+        ("false", False),
+        ("5 == 5", True),
+        ("5 == 6", False),
+        ("not true", False),
+        ("true and false", False),
+        ("true or false", True),
+    ],
+)
+def test_bool_producing_expressions_are_genuinely_bool(expr, expected):
+    result = evaluate(expr, {})
+    assert result is expected
+    assert isinstance(result, bool)
+
+
+def test_bool_var_round_trips_without_becoming_a_float():
+    result = evaluate("x", {"x": True})
+    assert result is True
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "true + 1",
+        "1 + true",
+        "true - 1",
+        "true * 2",
+        "true / 2",
+        "true % 2",
+        "-true",
+    ],
+)
+def test_bool_rejects_arithmetic(expr):
+    with pytest.raises(ExprError):
+        evaluate(expr, {})
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "true < false",
+        "true <= false",
+        "true > false",
+        "true >= false",
+    ],
+)
+def test_bool_rejects_ordering(expr):
+    # a known Python gotcha this has to guard against explicitly: bool is
+    # an int subclass, so Python's own `<`/`>` on two bools succeeds
+    # (true < false is False, not a TypeError) - there's no exception to
+    # catch, the type has to be checked before the operator runs at all.
+    with pytest.raises(ExprError):
+        evaluate(expr, {})
+
+
+def test_array_ordering_is_rejected():
+    # a sibling regression to the bool case above, same root cause:
+    # Python's list defines a working `<` (lexicographic), so this also
+    # can't rely on catching a TypeError.
+    with pytest.raises(ExprError):
+        evaluate("[1, 2] < [3, 4]", {})
+
+
+def test_bool_equality_still_works():
+    assert evaluate("true == true", {}) is True
+    assert evaluate("true == false", {}) is False
+    assert evaluate("true != false", {}) is True
+
+
+def test_terop_can_return_a_bool_without_it_decaying_to_a_float():
+    # terop's branches are ordinary expressions - a comparison branch
+    # produces a real bool, and that has to survive being passed back
+    # through the function-call result path unchanged.
+    result = evaluate("terop(true, 5 == 5, 1 == 2)", {})
+    assert result is True
+
+
 # -- terop -----------------------------------------------------------------
 
 @pytest.mark.parametrize(

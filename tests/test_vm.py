@@ -320,6 +320,19 @@ def test_live_reads_field_assigned_earlier_in_same_statement_order():
     assert [r.value["data"] for r in results] == [10.0, 11.0]
 
 
+def test_bool_field_publishes_as_a_genuine_bool_not_a_float():
+    src = "is_valid = true;\nlevel = 5;\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["is_valid"] is True
+    assert isinstance(results[0].value["level"], float)
+
+
+def test_comparison_result_written_to_a_field_is_a_bool():
+    src = "var threshold = 5;\nover = threshold > 3;\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["over"] is True
+
+
 def test_if_branches_on_string_comparison():
     src = 'var frame = "map";\nif frame == "map" {\n data = 1;\n} else {\n data = 0;\n}\nsend hz 1 dur 1t;'
     results, _ = run_all(src)

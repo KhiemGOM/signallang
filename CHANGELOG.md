@@ -6,6 +6,20 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.2.0] — 2026-08-17
 
 ### Added
+- **Breaking:** `Bool` is a genuine third primitive type, not `1.0`/
+  `0.0` in disguise. `true`/`false`, and every `==`/`!=`/`<`/`<=`/`>`/
+  `>=`/`and`/`or`/`not` result, now produce a real `bool`. `Bool`
+  rejects arithmetic and ordering the same way a string already did -
+  `true + 1`, `true < false` are both a clear `ExprError` now, not a
+  silent number. Fixes a real fidelity bug as a side effect: a schema
+  `Bool` field previously serialized to JSON as the number `1.0`/`0.0`
+  instead of an actual JSON `true`/`false`, since the value really was
+  a Python float underneath. Also fixes a latent bug this change forced
+  into the open: `[1, 2] < [3, 4]` silently succeeded instead of being
+  rejected (Python's own list ordering has a working `<`, so the old
+  catch-a-TypeError approach never caught it) - `<`/`<=`/`>`/`>=` now
+  validate operand types explicitly before calling Python's operator,
+  rather than relying on it to raise.
 - `seed(expr);` - reseeds the shared `random` module every
   random-distribution builtin (and `rand_walk!`/`brown_motion!`) draws
   from, for reproducible runs. Top level only, not valid inside a `live`

@@ -30,7 +30,7 @@ run.step()   # StepResult(value={'temperature': 20.5}, hz=2.0)
 - [Runtime model](#runtime-model)
 - [Language reference](#language-reference)
   - [Fields and values](#fields-and-values) · [Expressions](#expressions) ·
-    [Strings](#strings) · [Arrays and objects](#arrays-and-objects) ·
+    [Bool](#bool) · [Strings](#strings) · [Arrays and objects](#arrays-and-objects) ·
     [`msg`](#msg) · [Control flow](#control-flow) · [`send`](#send) ·
     [`wait`](#wait-duration) ·
     [Evaluation timing](#evaluation-timing-static-vs-live) ·
@@ -110,7 +110,7 @@ Loosest to tightest binding: `or` → `and` → `not` → comparison
 | | |
 |---|---|
 | Numbers | `20`, `0.5`, `-3.2` |
-| Constants | `true`, `false`, `pi`, `e` |
+| Constants | `true`, `false` (`Bool` — see [Bool](#bool)), `pi`, `e` |
 | Variables | `t`, `_t`, a `for` loop's own variable, any `var` name |
 | Functions | `sin cos abs sqrt floor ceil min max random` — see [Signal-shape builtins](#signal-shape-builtins), [Random distributions](#random-distributions) |
 | `terop(cond, then, else)` | conditional expression; both branches evaluate eagerly |
@@ -130,6 +130,25 @@ name freely — the rule is on overlapping scope, not the identifier.
 
 `.s`/`.m`/`.ms`/`.scale(k)`/`.add(k)`/`.bias(k)` chain in any order and
 count (`_t.s.scale(2).add(1)`); none accept a string operand.
+
+### Bool
+
+`true`/`false` are a genuine third primitive, not `1.0`/`0.0` — `==`/
+`!=`/`<`/`<=`/`>`/`>=` and `and`/`or`/`not` all produce a real `Bool`,
+not a number that happens to be `1` or `0`. A `Bool` publishes as an
+actual JSON `true`/`false` (not the number `1.0`), and is reserved the
+same way `pi`/`e` are, so it can't be shadowed by a `var`.
+
+```
+valid = true;               # publishes as JSON true, not 1.0
+over = threshold > 3;        # a comparison result is already a Bool
+if valid and over { ... }
+```
+
+`Bool` rejects arithmetic (`true + 1`) and ordering (`true < false`)
+the same way a string rejects both — a clear `ExprError`, not a silent
+fallback to Python's own `bool`-is-an-`int` behavior. `==`/`!=` still
+work between any two values, same as ever.
 
 ### Strings
 
