@@ -442,6 +442,36 @@ def test_timer_reset_statement():
     assert prog.body[1] == TimerReset(name="a")
 
 
+def test_seed_statement():
+    from signallang.ast_nodes import Seed
+
+    prog = parse("seed(42);")
+    assert prog.body[0] == Seed(value=ExprSpan("42"))
+
+
+def test_wait_statement_normalizes_duration_to_seconds():
+    from signallang.ast_nodes import Wait
+
+    prog = parse("wait 500ms;")
+    assert prog.body[0] == Wait(duration=0.5)
+    prog = parse("wait 2s;")
+    assert prog.body[0] == Wait(duration=2.0)
+    prog = parse("wait 1m;")
+    assert prog.body[0] == Wait(duration=60.0)
+
+
+def test_wait_rejects_tick_count_duration():
+    with pytest.raises(ScriptError):
+        parse("wait 5t;")
+
+
+def test_seed_and_wait_are_reserved_names():
+    with pytest.raises(ScriptError):
+        parse("var seed = 5;")
+    with pytest.raises(ScriptError):
+        parse("var wait = 5;")
+
+
 def test_unmatched_brace_is_a_parse_error():
     with pytest.raises(ScriptError):
         parse("if t < 1 {\n data = 1;\n")

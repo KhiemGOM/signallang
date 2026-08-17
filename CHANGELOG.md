@@ -5,6 +5,31 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.2.0] — 2026-08-17
 
+### Added
+- `seed(expr);` - reseeds the shared `random` module every
+  random-distribution builtin (and `rand_walk!`/`brown_motion!`) draws
+  from, for reproducible runs. Top level only, not valid inside a `live`
+  block, since reseeding every tick would make an accumulator replay the
+  same step forever. Addresses a real gap: none of the six
+  random-distribution builtins added this release had any way to make
+  a run's randomness reproducible.
+- `wait <duration>;` - a gap in the schedule: paces exactly like a
+  one-tick `send` (same `StepResult.hz`-driven real-time cadence), but
+  publishes nothing (`StepResult.sent = False`, `StepResult.value =
+  None`). `run_realtime()` now skips `on_send` when `sent` is `False`;
+  a hand-written driver loop needs the same check, and the README's own
+  raw-loop example was updated to show it. Duration is seconds/minutes/
+  milliseconds only, never a tick count (`Nt`) - a bare `wait` has no
+  surrounding `hz` to convert one against - and, unlike `send hz`,
+  never clamped to `max_hz` (that ceiling caps publish rate; `wait`
+  never publishes). Fills a real gap: skipping a `send` via `if` alone
+  costs zero simulated time and so can't represent an actual gap in a
+  steady cadence (verified directly - a naive `if cond { send; }`
+  inside a loop produced a `StepResult` on every single `step()` call
+  regardless, since the VM just fast-forwards through the untaken
+  branch), which meant there was previously no way to simulate a
+  steady-rate feed that sometimes drops a message.
+
 ### Fixed
 - `examples/stdout_signal.py` and `examples/websocket_signal.py` both
   called `linear(a, b, dur)` with 3 arguments - the pre-0.1.x sugar form

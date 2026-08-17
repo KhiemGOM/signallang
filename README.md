@@ -32,6 +32,7 @@ run.step()   # StepResult(value={'temperature': 20.5}, hz=2.0)
   - [Fields and values](#fields-and-values) · [Expressions](#expressions) ·
     [Strings](#strings) · [Arrays and objects](#arrays-and-objects) ·
     [`msg`](#msg) · [Control flow](#control-flow) · [`send`](#send) ·
+    [`wait`](#wait-duration) ·
     [Evaluation timing](#evaluation-timing-static-vs-live) ·
     [Timers](#timers) · [Signal-shape builtins](#signal-shape-builtins) ·
     [Random distributions](#random-distributions) ·
@@ -67,7 +68,8 @@ Pacing `step()` in real time is the caller's job:
 ```python
 run = compiled.new_run()
 while (result := run.step()) is not None:
-    publish(result.value)
+    if result.sent:            # False for a `wait` tick - nothing to publish
+        publish(result.value)
     sleep(1.0 / result.hz)
 ```
 
@@ -275,6 +277,42 @@ send [1, 2, 3];                  # value sugar: send this array directly
 to a 50Hz ceiling (`MAX_HZ`) at compile time — raise it per-script with
 `compile_script(source, max_hz=200)`.
 
+### `wait <duration>;`
+
+```
+wait 500ms;
+wait 0.1s;
+```
+
+A gap in the schedule: paces like a one-tick `send` (`StepResult.hz`
+set from the duration, so a real-time driver still sleeps the right
+amount), but publishes nothing — `StepResult.sent` is `False` and
+`StepResult.value` is `None` for that tick. `run_realtime()` skips
+calling `on_send` when `sent` is `False`; a hand-written driver loop
+needs the same check (`if result.sent: on_send(result.value)`).
+`<duration>` is a duration literal in seconds/minutes/milliseconds,
+normalized to seconds at parse time like any other — never `Nt`
+(ticks), since a bare `wait` has no surrounding `hz` to convert a tick
+count against. Unlike `send hz`, never clamped to `max_hz` — that
+ceiling caps how often a message actually publishes, and `wait` never
+publishes.
+
+The pattern this exists for — a steady cadence where some ticks
+publish nothing, e.g. simulating dropped packets — needs an explicit
+branch, since skipping a `send` outright costs no simulated time and
+so can't represent a gap on its own:
+
+```
+repeat {
+    if uniform(0, 1) < 0.95 {
+        data = noise(20, 0.5);
+        send hz 10 dur 1t;
+    } else {
+        wait 0.1s;   # this tick's period elapses, nothing published
+    }
+}
+```
+
 ### Evaluation timing: static vs. live
 
 `field = expr;` evaluates once, at the point the instruction executes,
@@ -374,6 +412,18 @@ Zero runtime dependencies: pure `random`-module, and for
 | `discrete_uniform(low, high)` | one draw over the whole numbers in `[low, high]` inclusive; both bounds must be whole numbers |
 | `poisson(lam)` | one draw, rate `lam` (expected event count per interval); `lam > 0` |
 | `binomial(n, p)` | successes out of `n` independent trials at probability `p`; `n` a non-negative whole number, `p` in `[0, 1]` |
+
+**`seed(expr);`** — a statement, not a function: reseeds the shared
+`random` module every one of the builtins above (and `rand_walk!`/
+`brown_motion!`) draws from, for reproducible runs. `expr` is a number
+or string. Top level only, not valid inside a `live` block — reseeding
+every tick would make a `rand_walk!`/`brown_motion!` replay the same
+step every time, defeating the point of either.
+
+```
+seed(42);
+data = noise!(0, 1);   # this run's exact sequence is now reproducible
+```
 
 **`rand_walk!(low, high)` / `brown_motion!(mean, stddev)`** — bang-call
 sugar for a persisted accumulator; neither exists as a plain function

@@ -20,6 +20,7 @@ from .ast_nodes import (
     Program,
     Reassign,
     Repeat,
+    Seed,
     Send,
     StaticDecl,
     StaticReassign,
@@ -27,6 +28,7 @@ from .ast_nodes import (
     TimerReset,
     VarDecl,
     VarIndexAssign,
+    Wait,
 )
 from .errors import ScriptError
 
@@ -100,6 +102,16 @@ class SendInstr:
 
 
 @dataclass
+class SeedInstr:
+    value: ExprSpan
+
+
+@dataclass
+class WaitInstr:
+    hz: float  # 1 / duration, pre-clamped to max_hz like SendInstr.hz
+
+
+@dataclass
 class Jump:
     target: int
 
@@ -165,6 +177,10 @@ class Compiler:
             self._compile_for_core(s.var, s.start, s.end, s.body)
         elif isinstance(s, Send):
             self._compile_send(s)
+        elif isinstance(s, Seed):
+            self._emit(SeedInstr(s.value))
+        elif isinstance(s, Wait):
+            self._compile_wait(s)
         else:
             raise ScriptError(f"internal: unknown statement {s!r}")
 
@@ -260,6 +276,15 @@ class Compiler:
             raise ScriptError(f"hz must be greater than 0, got {s.hz}")
         hz = self.max_hz if s.hz is None else min(s.hz, self.max_hz)
         self._emit(SendInstr(hz=hz, dur_kind=s.dur_kind, dur_value=s.dur_value))
+
+    def _compile_wait(self, s: Wait) -> None:
+        # unlike SendInstr.hz, never clamped to max_hz - that ceiling
+        # exists to cap how often a message actually publishes, and
+        # wait never publishes, so clamping here would just silently
+        # stretch a short requested gap into a longer one for no reason.
+        if s.duration <= 0:
+            raise ScriptError(f"wait duration must be greater than 0, got {s.duration}")
+        self._emit(WaitInstr(hz=1.0 / s.duration))
 
 
 def compile_program(program: Program, max_hz: float = MAX_HZ) -> list:

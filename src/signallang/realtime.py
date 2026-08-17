@@ -19,7 +19,8 @@ def run_realtime(compiled: CompiledScript, on_send) -> None:
         if result is None:
             return
         t0 = time.monotonic()
-        on_send(result.value)
+        if result.sent:
+            on_send(result.value)
         remaining = (1.0 / result.hz) - (time.monotonic() - t0)
         if remaining > 0:
             time.sleep(remaining)

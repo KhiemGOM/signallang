@@ -19,6 +19,7 @@ from .ast_nodes import (
     Program,
     Reassign,
     Repeat,
+    Seed,
     Send,
     StaticDecl,
     StaticReassign,
@@ -26,6 +27,7 @@ from .ast_nodes import (
     TimerReset,
     VarDecl,
     VarIndexAssign,
+    Wait,
 )
 from .errors import ScriptError
 from .expr import RESERVED_NAMES, TIME_SHAPED_FUNCTIONS
@@ -53,6 +55,8 @@ _KEYWORDS = frozenset(
         "static",
         "rand_walk",
         "brown_motion",
+        "seed",
+        "wait",
     }
 )
 # `name!(args)` sugar for the two accumulator patterns that need a
@@ -222,6 +226,10 @@ class Parser:
             return self._parse_for()
         if self._looking_at_word("send"):
             return self._parse_send()
+        if self._looking_at_word("seed"):
+            return self._parse_seed()
+        if self._looking_at_word("wait"):
+            return self._parse_wait()
         return self._parse_path_stmt()
 
     def _declare_var(self, name: str) -> None:
@@ -440,6 +448,31 @@ class Parser:
             self.pos += len(unit)
         mult = {"s": 1.0, "m": 60.0, "ms": 0.001, None: 1.0}[unit]
         return "wall", num * mult
+
+    def _parse_seed(self):
+        self._advance_word("seed")
+        self._expect_char("(")
+        value = self._scan_expr_span(")")
+        self._expect_char(")")
+        self._expect_char(";")
+        return Seed(value=value)
+
+    def _parse_wait(self):
+        self._advance_word("wait")
+        self._skip_ws()
+        num = self._parse_number()
+        unit = self._match_unit_suffix()
+        if unit == "t":
+            raise ScriptError(
+                "wait needs a real duration (s/m/ms), not a tick count - "
+                "there's no surrounding hz here to convert a tick count against",
+                self.pos,
+            )
+        if unit is not None:
+            self.pos += len(unit)
+        mult = {"s": 1.0, "m": 60.0, "ms": 0.001, None: 1.0}[unit]
+        self._expect_char(";")
+        return Wait(duration=num * mult)
 
     def _word_at(self, pos: int, word: str) -> bool:
         end = pos + len(word)

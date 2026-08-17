@@ -59,6 +59,27 @@ def test_send_variants_compile_to_one_send_instruction_each():
         assert sends[0].dur_value == expected_val
 
 
+def test_seed_compiles_to_one_seed_instruction():
+    instrs = compile_program(parse("seed(42);"))
+    kinds = [type(i).__name__ for i in instrs]
+    assert kinds == ["SeedInstr"]
+    assert instrs[0].value.text == "42"
+
+
+def test_wait_compiles_to_one_wait_instruction_with_derived_hz():
+    instrs = compile_program(parse("wait 2s;"))
+    kinds = [type(i).__name__ for i in instrs]
+    assert kinds == ["WaitInstr"]
+    assert instrs[0].hz == 0.5  # 1 / 2s
+
+
+def test_wait_hz_is_not_clamped_to_max_hz():
+    # unlike SendInstr.hz - wait never publishes, so there's nothing for
+    # the ceiling to protect against here.
+    instrs = compile_program(parse("wait 0.001s;"))
+    assert instrs[0].hz == 1000.0
+
+
 def test_dur_inf_inside_infinite_repeat_before_end_is_a_compile_error():
     with pytest.raises(ScriptError):
         compile_program(parse("repeat {\n data = 1;\n send dur inf;\n data = 2;\n send dur 1s;\n}"))

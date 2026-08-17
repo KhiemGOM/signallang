@@ -59,6 +59,28 @@ class TimerReset:
 
 
 @dataclass
+class Seed:
+    """`seed(expr);` - reseeds the shared `random` module used by every
+    random-distribution builtin, for reproducible runs. Top-level only,
+    not valid inside a `live` block (reseeding every tick would make a
+    rand_walk!/brown_motion! replay the same step every time, defeating
+    the point of either)."""
+
+    value: ExprSpan
+
+
+@dataclass
+class Wait:
+    """`wait <duration>;` - a gap in the schedule: paces exactly like a
+    one-tick `send` (the same StepResult.hz-based real-time cadence),
+    but publishes nothing. `<duration>` is a duration literal, normalized
+    to seconds at parse time like any other - never `Nt` (ticks), since
+    a bare `wait` has no surrounding hz to convert a tick count against."""
+
+    duration: float
+
+
+@dataclass
 class Reassign:
     name: str
     value: ExprSpan

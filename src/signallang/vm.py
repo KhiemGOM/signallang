@@ -9,6 +9,7 @@ driver, or a host application's own timer/event-loop callback).
 from __future__ import annotations
 
 import copy
+import random
 from dataclasses import dataclass
 
 from . import expr
@@ -23,10 +24,12 @@ from .compiler import (
     LiveSetVar,
     LiveStaticSetVar,
     ResetTimer,
+    SeedInstr,
     SendInstr,
     SetField,
     SetVar,
     SetVarIndex,
+    WaitInstr,
     compile_program,
 )
 from .errors import ScriptError
@@ -41,8 +44,9 @@ class TimerState:
 
 @dataclass
 class StepResult:
-    value: dict
+    value: dict | None  # None iff sent is False (a wait tick - nothing to publish)
     hz: float
+    sent: bool = True
 
 
 class ScriptRun:
@@ -89,10 +93,18 @@ class ScriptRun:
             instr = self.instructions[self.ip]
             if isinstance(instr, SendInstr):
                 return self._do_send_tick(instr)
+            if isinstance(instr, WaitInstr):
+                return self._do_wait_tick(instr)
             self._exec_instant(instr)
 
     def _exec_instant(self, instr) -> None:
-        if isinstance(instr, SetVar):
+        if isinstance(instr, SeedInstr):
+            value = self._eval(instr.value)
+            if not isinstance(value, (float, str)):
+                raise ScriptError("seed() needs a number or string")
+            random.seed(value)
+            self.ip += 1
+        elif isinstance(instr, SetVar):
             self.vars[instr.name] = self._eval(instr.expr)
             self.ip += 1
         elif isinstance(instr, SetVarIndex):
@@ -144,6 +156,15 @@ class ScriptRun:
             assert instr.dur_value is not None  # guaranteed by the compiler for dur_kind="wall"
             return (self.master_t - self._send_start_t) >= instr.dur_value - 1e-9
         raise ScriptError(f"internal: unknown dur_kind {instr.dur_kind!r}")
+
+    def _do_wait_tick(self, instr: WaitInstr) -> StepResult:
+        # always exactly one tick, unlike SendInstr - a `wait` is a
+        # single gap, not a multi-tick span, so the IP always advances
+        # immediately rather than tracking done-ness across repeated
+        # step() calls the way a multi-tick Send does.
+        self.master_t += 1.0 / instr.hz
+        self.ip += 1
+        return StepResult(value=None, hz=instr.hz, sent=False)
 
     # -- expression evaluation -----------------------------------------------
 

@@ -220,6 +220,60 @@ def test_timer_reset_zeros_eager_timer_immediately():
     assert results[1].value["data"] == pytest.approx(0.0, abs=1e-9)
 
 
+def test_seed_makes_a_random_sequence_reproducible():
+    src = "seed(42);\ndata = noise!(0, 1);\nsend hz 1 dur 5t;"
+
+    def run():
+        run = compile_script(src).new_run()
+        return [round(run.step().value["data"], 9) for _ in range(5)]
+
+    assert run() == run()
+
+
+def test_seed_with_different_values_diverges():
+    def run(seed_value):
+        src = f"seed({seed_value});\ndata = noise!(0, 1);\nsend hz 1 dur 3t;"
+        run = compile_script(src).new_run()
+        return [run.step().value["data"] for _ in range(3)]
+
+    assert run(1) != run(2)
+
+
+def test_wait_advances_time_without_producing_a_sent_result():
+    src = "data = 1;\nsend hz 10 dur 1t;\nwait 0.5s;\ndata = t;\nsend hz 10 dur 1t;"
+    run = compile_script(src).new_run()
+    first = run.step()
+    gap = run.step()
+    second = run.step()
+    assert first.sent is True and first.value == {"data": 1.0}
+    assert gap.sent is False and gap.value is None
+    assert gap.hz == pytest.approx(2.0)  # 1 / 0.5s
+    assert second.sent is True
+    assert second.value["data"] == pytest.approx(0.1 + 0.5)  # first tick's t + the wait
+
+
+def test_wait_inside_a_loop_can_simulate_dropped_ticks():
+    # the packet-loss pattern: same cadence either way, some laps publish
+    # nothing instead of a value.
+    src = """
+    seed(7);
+    repeat {
+        if uniform(0, 1) < 0.5 {
+            data = 1;
+            send hz 10 dur 1t;
+        } else {
+            wait 0.1s;
+        }
+    }
+    """
+    run = compile_script(src).new_run()
+    results = [run.step() for _ in range(20)]
+    assert any(r.sent for r in results)
+    assert any(not r.sent for r in results)
+    for r in results:
+        assert r.hz == pytest.approx(10.0)
+
+
 def test_default_and_positional_fill_against_schema():
     schema = DictSchemaProvider({"header": {"stamp": 0.0, "frame_id": ""}, "temperature": 0.0, "variance": 0.0})
     results, _ = run_all("send [default, 20.0, 0.1];", schema_provider=schema)
