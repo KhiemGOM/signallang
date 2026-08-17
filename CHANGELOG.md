@@ -5,6 +5,16 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- README restructured into a denser reference format: added a table of
+  contents and a "Timers" section documenting `timer()`/`latching_timer()`
+  eager-vs-latching semantics (previously only implied through `_t`'s own
+  description, with no dedicated section of its own); cut "Comparison to
+  a manually written loop" and folded its content into a new compact
+  "Prior art" table alongside the old "Rationale" section (same
+  information, one place instead of two); trimmed narrative/rationale
+  prose throughout in favor of flat rule statements. No behavior change.
+
 ### Added
 - `rand_walk!(low, high)` / `brown_motion!(mean, stddev)` - bang-call
   sugar for the two accumulator recipes below, spelled out so they don't
