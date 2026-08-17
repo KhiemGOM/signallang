@@ -469,6 +469,30 @@ def test_reset_on_an_undeclared_name_is_a_compile_error():
         parse("unknown.reset();")
 
 
+def test_duration_var_from_a_literal_is_tracked():
+    prog = parse("var d = 10s;")
+    assert "d" in prog.duration_vars
+
+
+def test_duration_var_copied_from_another_is_also_tracked():
+    prog = parse("var d = 10s;\nvar d2 = d;")
+    assert {"d", "d2"} <= prog.duration_vars
+
+
+def test_bare_number_var_is_not_tracked_as_duration():
+    # a bare number is a perfectly valid duration ARGUMENT (implicitly
+    # seconds), but its own var declaration doesn't carry enough signal
+    # to trust it as one later, far from where it was declared - only
+    # an explicit unit suffix does.
+    prog = parse("var count = 5;")
+    assert "count" not in prog.duration_vars
+
+
+def test_duration_var_scope_is_isolated_to_its_live_block():
+    prog = parse("x = live {\n var d = 10s;\n return d;\n};")
+    assert "d" not in prog.duration_vars
+
+
 def test_seed_statement():
     from signallang.ast_nodes import Seed
 

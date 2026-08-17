@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+import re
 from typing import TYPE_CHECKING, Callable, Union
 
 if TYPE_CHECKING:
@@ -201,6 +202,25 @@ TIME_SHAPED_FUNCTIONS = frozenset(
         "polynomial",
     }
 )
+# name -> (0-indexed argument position, its parameter name) for the one
+# argument each of these needs to be Duration-typed - checked against
+# is_duration_text() on that argument's own source span before the call
+# is made. The index is the position in the FULLY EXPANDED call expr.py
+# actually parses, so it's the same whether the user wrote the call
+# directly (linear(t, a, b, dur)) or via `!` bang sugar, which injects
+# _t as argument 0 and shifts nothing else - dur/period always lands at
+# this same index either way. exponential's `rate` and damped_wave's
+# `decay` are NOT durations (they're 1/seconds rate constants), so
+# neither function appears here despite being time-shaped.
+_DURATION_PARAMS = {
+    "linear": (3, "dur"),
+    "square": (3, "period"),
+    "triangle": (3, "period"),
+    "sawtooth": (3, "period"),
+    "damped_wave": (3, "period"),
+    "sinusoidal_wave": (2, "period"),
+    "pulse": (3, "period"),
+}
 
 _FUNCTIONS: dict[str, Callable[..., Value]] = {
     "sin": math.sin,
@@ -251,6 +271,58 @@ RESERVED_NAMES = frozenset(_FUNCTIONS) | frozenset(_CONSTANTS)
 # (longest match first) so ".ms" isn't swallowed as ".m" leaving a stray "s".
 _TIME_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0}
 _TIME_UNIT_SUFFIXES = ("ms", "s", "m")
+# The Duration type is compile-time-only (see README's "Int and Float"/
+# Duration docs) - it never becomes its own runtime Value, so there's
+# nothing to check via isinstance() the way Bool/Int/Float are. Instead
+# it's recognized purely by shape, and deliberately by TWO different
+# rules depending on where the check happens:
+#
+# - At a call-site ARGUMENT (is_duration_text): a bare number is fine,
+#   unit suffix optional - `square(t, 0, 1, 5)` already means 5 seconds,
+#   exactly like every duration-shaped parameter in this language
+#   always has, and the literal sits right there at the call site,
+#   directly reviewable. This only needs to catch something that was
+#   never a duration at all (an arithmetic expression, an unrelated
+#   var), not a literal that never needed a unit to begin with.
+# - At a `var` DECLARATION (is_duration_decl_text): a bare number does
+#   NOT mark the var Duration-typed - only an explicit unit suffix
+#   does. A var's declaration might be referenced far from the call
+#   site that eventually uses it, so "is this genuinely a duration"
+#   needs the same explicit signal a duration literal always carries;
+#   without that, every plain numeric var (`var count = 5;`) would
+#   silently count as one too, and the whole point of tracking
+#   Duration-typed vars - catching one that never was - would be lost.
+#
+# Both accept a bare reference to an already-tracked var either way.
+# parser.py uses is_duration_decl_text for `var` declarations; expr.py
+# uses is_duration_text to check a Duration-required call argument
+# (linear's dur, square/triangle/sawtooth/damped_wave/sinusoidal_wave/
+# pulse's period, .shift's offset) against the caller-supplied
+# duration_vars set.
+_DURATION_DECL_RE = re.compile(r"^-?\d+(\.\d+)?(ms|s|m)$")
+_DURATION_ARG_RE = re.compile(r"^-?\d+(\.\d+)?(ms|s|m)?$")
+BARE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def is_duration_decl_text(text: str, duration_vars: frozenset) -> bool:
+    """True if `text` (a var's entire right-hand side, already
+    .strip()'d by the caller) should mark that var Duration-typed."""
+    text = text.strip()
+    if _DURATION_DECL_RE.match(text):
+        return True
+    return bool(BARE_IDENT_RE.match(text)) and text in duration_vars
+
+
+def is_duration_text(text: str, duration_vars: frozenset) -> bool:
+    """True if `text` (a call argument's own source span, already
+    .strip()'d by the caller) is acceptable where a Duration-required
+    parameter expects one."""
+    text = text.strip()
+    if _DURATION_ARG_RE.match(text):
+        return True
+    return bool(BARE_IDENT_RE.match(text)) and text in duration_vars
+
+
 # Postfix result transforms - .scale(k) multiplies, .add(k)/.bias(k) add
 # (two names for the same operation: "add" for plain arithmetic, "bias"
 # for the DC-offset framing of a signal). Unlike .s/.m/.ms these take a
@@ -293,6 +365,26 @@ def _type_name(value: Value) -> str:
     if isinstance(value, dict):
         return "object"
     return "number"
+
+
+def _value_category(value: Value) -> str:
+    """Like _type_name, but Int and Float collapse into one "number"
+    category - used only for terop()'s then/else type-agreement check,
+    where the two are meant to be as interchangeable as they already
+    are in arithmetic (terop(cond, 5, 5.0) is fine; terop(cond, 5,
+    "x") isn't). Bool stays its own category, same reasoning as
+    everywhere else it's kept separate from Int/Float."""
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    raise AssertionError(f"unreachable: unrecognized Value type {type(value)!r}")
 
 
 def is_number(value: Value) -> TypeGuard[int | float]:
@@ -341,10 +433,11 @@ class _Parser:
     (< > <= >= == !=, non-chaining) > + - > * / % > unary +/- > atom.
     """
 
-    def __init__(self, text: str, variables: dict):
+    def __init__(self, text: str, variables: dict, duration_vars: frozenset = frozenset()):
         self.text = text
         self.pos = 0
         self.variables = variables
+        self.duration_vars = duration_vars
 
     def parse(self) -> Value:
         value = self._or()
@@ -554,9 +647,16 @@ class _Parser:
                         f"'.shift(...)' is not supported - '{name}''s first argument is {_type_name(args[0])}"
                     )
                 self.pos = name_end + 1
+                offset_start = self.pos
                 offset = self._or()
+                offset_span = self.text[offset_start : self.pos]
                 if not is_number(offset):
                     raise ExprError(f"'.shift(...)' requires a number argument, got {_type_name(offset)}")
+                if not is_duration_text(offset_span, self.duration_vars):
+                    raise ExprError(
+                        f"'.shift(...)' needs a duration for its offset (a literal like 5s, "
+                        f"or a var assigned from one) - got {offset_span.strip()!r}"
+                    )
                 if self._peek() != ")":
                     raise ExprError("expected ')'")
                 self.pos += 1
@@ -776,16 +876,37 @@ class _Parser:
             if self._peek() == "(":
                 self.pos += 1
                 args = []
+                arg_spans = []
                 if self._peek() != ")":
+                    arg_start = self.pos
                     args.append(self._or())
+                    arg_spans.append(self.text[arg_start : self.pos])
                     while self._peek() == ",":
                         self.pos += 1
+                        self._skip_ws()
+                        arg_start = self.pos
                         args.append(self._or())
+                        arg_spans.append(self.text[arg_start : self.pos])
                 if self._peek() != ")":
                     raise ExprError("expected ')'")
                 self.pos += 1
                 if name not in _FUNCTIONS:
                     raise ExprError(f"unknown function '{name}'")
+                if name in _DURATION_PARAMS:
+                    idx, param_name = _DURATION_PARAMS[name]
+                    if idx < len(arg_spans) and not is_duration_text(arg_spans[idx], self.duration_vars):
+                        raise ExprError(
+                            f"'{name}()' needs a duration for '{param_name}' (a literal like 5s, "
+                            f"or a var assigned from one) - got {arg_spans[idx].strip()!r}"
+                        )
+                if name == "terop" and len(args) == 3:
+                    then_category = _value_category(args[1])
+                    else_category = _value_category(args[2])
+                    if then_category != else_category:
+                        raise ExprError(
+                            f"terop()'s then/else branches must be the same type, got "
+                            f"{_type_name(args[1])} and {_type_name(args[2])}"
+                        )
                 args, pending = self._consume_call_postfix_chain(name, args)
                 try:
                     result = _FUNCTIONS[name](*args)
@@ -816,8 +937,8 @@ class _Parser:
         raise ExprError(f"unexpected character '{c}' at position {self.pos}")
 
 
-def evaluate(expression: str, variables: dict) -> Value:
-    return _Parser(expression, variables).parse()
+def evaluate(expression: str, variables: dict, duration_vars: frozenset = frozenset()) -> Value:
+    return _Parser(expression, variables, duration_vars).parse()
 
 
 def parse_one(text: str, variables: dict) -> tuple[Value, int]:

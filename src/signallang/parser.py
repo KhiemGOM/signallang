@@ -30,7 +30,7 @@ from .ast_nodes import (
     Wait,
 )
 from .errors import ScriptError
-from .expr import RESERVED_NAMES, TIME_SHAPED_FUNCTIONS
+from .expr import RESERVED_NAMES, TIME_SHAPED_FUNCTIONS, is_duration_decl_text
 
 _UNIT_SUFFIXES = ("ms", "s", "m", "t")  # longest match first
 _KEYWORDS = frozenset(
@@ -108,6 +108,13 @@ class Parser:
         self.known_vars: set = set()
         self.static_names: set = set()  # live-block statics currently in scope
         self.timer_names: set = set()  # known_vars declared via timer()/latching_timer()
+        # known_vars whose entire RHS was exactly a duration literal (a
+        # bare number does NOT count here - see expr.py's
+        # is_duration_decl_text for why) or a bare reference to another
+        # duration_vars name. Attached to Program at the end of parsing
+        # so vm.py can hand it to expr.py for checking Duration-required
+        # call arguments.
+        self.duration_vars: set = set()
 
     # -- low-level helpers --------------------------------------------------
 
@@ -202,7 +209,7 @@ class Parser:
         self._skip_ws()
         if self.pos != len(self.text):
             raise ScriptError(f"unexpected trailing input: {self.text[self.pos:].strip()!r}", self.pos)
-        return Program(body=body)
+        return Program(body=body, duration_vars=frozenset(self.duration_vars))
 
     def _parse_block_until(self, end_char: str, stmt_parser) -> list:
         stmts = []
@@ -274,6 +281,8 @@ class Parser:
         value = self._scan_expr_span(";")
         self._expect_char(";")
         self._declare_var(name)
+        if is_duration_decl_text(value.text, frozenset(self.duration_vars)):
+            self.duration_vars.add(name)
         return VarDecl(name=name, value=value)
 
     def _parse_path_stmt(self):
@@ -603,9 +612,11 @@ class Parser:
             saved_known = self.known_vars
             saved_static = self.static_names
             saved_timers = self.timer_names
+            saved_durations = self.duration_vars
             self.known_vars = set()  # live blocks can only write their own locals
             self.static_names = set()
             self.timer_names = set()
+            self.duration_vars = set()
             body = self._parse_block_until_return()
             self._advance_word("return")
             ret = self._scan_expr_span(";")
@@ -614,6 +625,7 @@ class Parser:
             self.known_vars = saved_known
             self.static_names = saved_static
             self.timer_names = saved_timers
+            self.duration_vars = saved_durations
             return LiveBlock(body=body, return_expr=ret)
         # shorthand: `live <expr>;` desugars to `live { return <expr>; };` -
         # same LiveBlock AST (empty body, no locals), for the common case

@@ -166,6 +166,72 @@ def test_terop_can_return_an_int_without_it_decaying_to_a_float():
     assert result == 5
 
 
+# -- Duration-required call arguments ----------------------------------------
+
+def test_duration_required_arg_accepts_a_bare_number():
+    # a bare number is already implicitly seconds everywhere else in
+    # this language - no unit required at the call site.
+    assert evaluate("square(0, 0, 1, 2)", {}) == 0.0
+
+
+def test_duration_required_arg_accepts_a_tracked_duration_var():
+    v = evaluate("square(0, 0, 1, d)", {"d": 2.0}, duration_vars=frozenset({"d"}))
+    assert v == 0.0
+
+
+def test_duration_required_arg_rejects_an_untracked_var():
+    with pytest.raises(ExprError):
+        evaluate("square(0, 0, 1, count)", {"count": 2.0})
+
+
+def test_duration_required_arg_rejects_an_arithmetic_expression():
+    with pytest.raises(ExprError):
+        evaluate("square(0, 0, 1, 1 + 1)", {})
+
+
+def test_shift_offset_accepts_a_bare_number():
+    assert evaluate("square(0, 0, 1, 2).shift(-1)", {}) == pytest.approx(1.0)
+
+
+def test_shift_offset_rejects_an_untracked_var():
+    with pytest.raises(ExprError):
+        evaluate("square(0, 0, 1, 2).shift(off)", {"off": -1.0})
+
+
+def test_shift_offset_accepts_a_tracked_duration_var():
+    v = evaluate("square(0, 0, 1, 2).shift(off)", {"off": -1.0}, duration_vars=frozenset({"off"}))
+    assert v == pytest.approx(1.0)
+
+
+# -- terop requires matching branch types ------------------------------------
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        'terop(true, 5, "x")',
+        'terop(true, "x", 5)',
+        "terop(true, true, 5)",
+        "terop(true, [1], json { a: 1 })",
+    ],
+)
+def test_terop_rejects_mismatched_branch_types(expr):
+    with pytest.raises(ExprError):
+        evaluate(expr, {})
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "terop(true, 5, 5.0)",  # Int/Float interchangeable, like arithmetic
+        'terop(true, "a", "b")',
+        "terop(true, true, false)",
+        "terop(true, [1], [2])",
+    ],
+)
+def test_terop_allows_matching_branch_types(expr):
+    evaluate(expr, {})  # just must not raise
+
+
 # -- bool is a real type, not disguised 1.0/0.0 -----------------------------
 
 @pytest.mark.parametrize(

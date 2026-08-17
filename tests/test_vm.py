@@ -350,6 +350,27 @@ def test_int_var_index_assign_still_works():
     assert results[0].value["data"] == [1, 99, 3]
 
 
+def test_duration_var_propagates_through_bang_call():
+    src = "var d = 10s;\ndata = linear!(0, 1, d);\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 0.0
+
+
+def test_duration_var_copy_still_propagates():
+    src = "var d = 5s;\nvar d2 = d;\ndata = square(0, 0, 1, d2);\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 0.0
+
+
+def test_plain_var_rejected_where_duration_required():
+    # regression test for the actual motivating gap: a var that was
+    # never declared from a duration literal, silently passed where one
+    # was expected.
+    src = "var count = 5;\ndata = square(0, 0, 1, count);\nsend;"
+    with pytest.raises((ScriptError, ExprError)):
+        run_all(src)
+
+
 def test_if_branches_on_string_comparison():
     src = 'var frame = "map";\nif frame == "map" {\n data = 1;\n} else {\n data = 0;\n}\nsend hz 1 dur 1t;'
     results, _ = run_all(src)

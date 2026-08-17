@@ -163,3 +163,8 @@ class Send:
 @dataclass
 class Program:
     body: list = field(default_factory=list)
+    # names of top-level vars whose entire right-hand side was either a
+    # duration literal (10s, 500ms) or a bare reference to another such
+    # var - the only two shapes tracked as Duration-typed. See vm.py's
+    # ScriptRun/expr.py's _Parser for where this is actually consulted.
+    duration_vars: frozenset = field(default_factory=frozenset)

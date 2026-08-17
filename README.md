@@ -30,7 +30,7 @@ run.step()   # StepResult(value={'temperature': 20.5}, hz=2.0)
 - [Runtime model](#runtime-model)
 - [Language reference](#language-reference)
   - [Fields and values](#fields-and-values) · [Expressions](#expressions) ·
-    [Int and Float](#int-and-float) · [Bool](#bool) · [Strings](#strings) ·
+    [Int and Float](#int-and-float) · [Duration](#duration) · [Bool](#bool) · [Strings](#strings) ·
     [Arrays and objects](#arrays-and-objects) ·
     [`msg`](#msg) · [Control flow](#control-flow) · [`send`](#send) ·
     [`wait`](#wait-duration) ·
@@ -114,7 +114,7 @@ Loosest to tightest binding: `or` → `and` → `not` → comparison
 | Constants | `true`, `false` (`Bool` — see [Bool](#bool)), `pi`, `e` |
 | Variables | `t`, `_t`, a `for` loop's own variable, any `var` name |
 | Functions | `sin cos abs sqrt floor ceil min max floordiv random` — see [Signal-shape builtins](#signal-shape-builtins), [Random distributions](#random-distributions) |
-| `terop(cond, then, else)` | conditional expression; both branches evaluate eagerly |
+| `terop(cond, then, else)` | conditional expression; both branches evaluate eagerly and must be the same type (`Int`/`Float` count as one for this) |
 | Duration literals | `10s`, `3m`, `500ms`, `10t` (ticks); normalized to seconds at parse time |
 | `.s` / `.m` / `.ms` | postfix unit view, e.g. `_t.s` |
 | `.scale(k)` | postfix result transform, multiply by `k` |
@@ -157,6 +157,40 @@ count, not a measurement.
 A duration literal (`10s`, `500ms`) is always `Float`, never `Int`,
 whether or not the written number itself had a decimal point — a
 length of time isn't a whole-number concept the way a count is.
+
+### Duration
+
+`Duration` is compile-time-only — it's never a runtime `Value` the way
+`Int`/`Float`/`Bool` are, so it can't be stored in an array, held in a
+`json {}` field, or returned from a function. It's recognized purely
+by shape, and propagates through exactly two:
+
+```
+var d = 10s;     # a duration literal - d is Duration
+var d2 = d;      # a bare reference to a Duration var - d2 is too
+```
+
+Anything else — arithmetic (`d + 1s`), a function call, indexing — is
+never recognized as `Duration`, full stop; there's no way to combine
+one with anything and keep the type. `Duration` is required wherever a
+length of time is the parameter's actual meaning: `linear`'s `dur`,
+`square`/`triangle`/`sawtooth`/`damped_wave`/`sinusoidal_wave`/`pulse`'s
+`period`, and [`.shift(offset)`](#shiftoffset)'s `offset`. At the call
+site itself, a bare number is still fine with no unit needed — exactly
+as it always has been, since it's directly reviewable right there —
+`square(t, 0, 1, 2)` needs no change. What's actually rejected is a
+*variable* that was never provably a duration:
+
+```
+var count = 5;
+square(t, 0, 1, count);   # rejected - count is Int, not Duration
+square(t, 0, 1, 5);        # fine - a literal needs no tracking
+square(t, 0, 1, d);        # fine - d was declared from 10s above
+```
+
+`send`'s `dur` modifier and [`wait`](#wait-duration) never had this gap
+to begin with — both already accept only a literal number+unit token
+directly in their own grammar, never an expression or a variable.
 
 ### Bool
 
@@ -436,7 +470,9 @@ clear reason, not left to fail at runtime.
 
 Pure functions of an explicit elapsed-time argument, same evaluation
 semantics as `sin`/`cos`: bare call evaluates once, `!` evaluates once
-per tick.
+per tick. `dur`/`period` below are [`Duration`](#duration)-required —
+`rate`/`decay` aren't, despite also being time-related, since they're
+rate constants (1/seconds), not lengths of time.
 
 | | |
 |---|---|
@@ -509,7 +545,9 @@ name(args).shift(offset)
 
 Subtracts `offset` from the call's first argument, then calls with the
 modified list; otherwise ordinary (once, or once per tick under
-`live`/`!`).
+`live`/`!`). `offset` is [`Duration`](#duration)-required, same as
+`dur`/`period` above — a bare number needs no unit, but a variable must
+be provably a duration.
 
 ```
 square!(0, 1, 10s).shift(3s)    # ≡ live { return square(_t - 3s, 0, 1, 10s); };

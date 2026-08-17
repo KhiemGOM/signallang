@@ -50,9 +50,10 @@ class StepResult:
 
 
 class ScriptRun:
-    def __init__(self, instructions: list, schema_provider=None):
+    def __init__(self, instructions: list, schema_provider=None, duration_vars: frozenset = frozenset()):
         self.instructions = instructions
         self.schema_provider = schema_provider
+        self.duration_vars = duration_vars
 
         self.ip = 0
         self.halted = False
@@ -213,7 +214,7 @@ class ScriptRun:
         scope = self._flat_scope(live_timer_name)
         if extra:
             scope.update(extra)
-        return expr.evaluate(span.text, scope)
+        return expr.evaluate(span.text, scope, self.duration_vars)
 
     # -- var-held array/object mutation --------------------------------
 
@@ -401,15 +402,16 @@ class ScriptRun:
 
 
 class CompiledScript:
-    def __init__(self, instructions: list, schema_provider=None):
+    def __init__(self, instructions: list, schema_provider=None, duration_vars: frozenset = frozenset()):
         self.instructions = instructions
         self.schema_provider = schema_provider
+        self.duration_vars = duration_vars
 
     def new_run(self) -> ScriptRun:
-        return ScriptRun(self.instructions, schema_provider=self.schema_provider)
+        return ScriptRun(self.instructions, schema_provider=self.schema_provider, duration_vars=self.duration_vars)
 
 
 def compile_script(source: str, schema_provider=None, max_hz: float = MAX_HZ) -> CompiledScript:
     program = parse(source)
     instructions = compile_program(program, max_hz=max_hz)
-    return CompiledScript(instructions, schema_provider=schema_provider)
+    return CompiledScript(instructions, schema_provider=schema_provider, duration_vars=program.duration_vars)

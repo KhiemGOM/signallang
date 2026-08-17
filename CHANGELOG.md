@@ -5,6 +5,39 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.2.0] — 2026-08-17
 
+### Added
+- `Duration` - a compile-time-only type (never a runtime `Value`, so it
+  can't be stored in an array/object or returned from a function),
+  propagated through exactly two shapes: a duration literal (`10s`)
+  itself, or a bare reference to another `Duration`-typed var. Required
+  wherever a parameter's actual meaning is a length of time - `linear`'s
+  `dur`, `square`/`triangle`/`sawtooth`/`damped_wave`/`sinusoidal_wave`/
+  `pulse`'s `period`, `.shift`'s `offset`. A bare number at the call
+  site still needs no unit (unchanged - it's directly reviewable right
+  there); what's now caught is a *variable* that was never provably a
+  duration (`var count = 5; square(t, 0, 1, count);`). `send`'s `dur`
+  and `wait` never had this gap, since both already only ever accept a
+  literal number+unit token in their own grammar. Threading this
+  required real cross-module plumbing (parser.py computes the tracked
+  var set on `Program`, `compile_script()`/`CompiledScript`/`ScriptRun`
+  carry it through, `expr.evaluate()` gets it as a new parameter) -
+  the first design considered tracking Duration through arbitrary
+  arithmetic too, which would have needed a second full type-inference
+  pass over expr.py's whole grammar; scoped down to these two shapes
+  instead once that scope became clear mid-design. Caught and fixed one
+  self-inflicted regression before shipping: an early version required
+  literals to also carry an explicit unit at the call site, which broke
+  the entire existing signal-shape-builtin test suite (`square(t, 0, 1,
+  2)` with no unit is, and always was, valid) - the fix separates "does
+  this var's own declaration prove Duration" (strict, unit required)
+  from "is this call argument acceptable" (permissive, bare numbers
+  fine), which turned out to be two genuinely different questions.
+- `terop(cond, then, else)`'s two branches must now be the same type
+  (`Int`/`Float` count as one, matching how freely they already mix in
+  arithmetic) - `terop(cond, 5, "x")` is a clear error instead of
+  silently having an ambiguous return type depending on which branch
+  runs.
+
 ### Fixed
 - `.reset()` on anything other than a genuine `timer()`/
   `latching_timer()` var - a plain `var`, `t` (the global counter,
