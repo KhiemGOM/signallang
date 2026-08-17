@@ -6,6 +6,16 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Three new random-distribution builtins, none time-shaped (no time
+  argument, `!` passes arguments exactly as written - already free for
+  any function, not just this set): `uniform(low, high)` (one draw over
+  `[low, high]`; `random()` is the fixed `[0, 1]` case of this),
+  `poisson(lam)` (Knuth's algorithm, pure Python), and `binomial(n, p)`
+  (n independent Bernoulli trials). No `numpy` dependency added - stays
+  at zero runtime dependencies. `noise` moves into a new "Random
+  distributions" doc section alongside them (no code change, grouped by
+  what it actually is rather than living in "Signal-shape builtins",
+  which it was never really one of).
 - `static name = expr;` inside a `live` block: a local whose value
   persists across every tick's re-evaluation of the block, instead of
   starting over each tick like a plain `var` local. `expr` evaluates

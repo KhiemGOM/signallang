@@ -162,6 +162,58 @@ def test_noise_returns_a_float():
         assert isinstance(evaluate("noise(0, 1)", {}), float)
 
 
+def test_uniform_stays_within_bounds():
+    for _ in range(200):
+        v = evaluate("uniform(2, 5)", {})
+        assert isinstance(v, float)
+        assert 2.0 <= v <= 5.0
+
+
+def test_poisson_returns_a_non_negative_whole_number_as_a_float():
+    for _ in range(200):
+        v = evaluate("poisson(3)", {})
+        assert isinstance(v, float)
+        assert v >= 0.0
+        assert v == int(v)
+
+
+def test_poisson_rejects_non_positive_lam():
+    with pytest.raises(ExprError):
+        evaluate("poisson(0)", {})
+    with pytest.raises(ExprError):
+        evaluate("poisson(-1)", {})
+
+
+def test_binomial_stays_within_n_trials():
+    for _ in range(200):
+        v = evaluate("binomial(10, 0.5)", {})
+        assert isinstance(v, float)
+        assert 0.0 <= v <= 10.0
+        assert v == int(v)
+
+
+def test_binomial_zero_probability_is_always_zero():
+    assert evaluate("binomial(10, 0)", {}) == 0.0
+
+
+def test_binomial_certain_probability_is_always_n():
+    assert evaluate("binomial(10, 1)", {}) == 10.0
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "binomial(-1, 0.5)",  # n must be non-negative
+        "binomial(2.5, 0.5)",  # n must be a whole number
+        "binomial(10, -0.1)",  # p must be in [0, 1]
+        "binomial(10, 1.1)",
+    ],
+)
+def test_binomial_rejects_invalid_arguments(expr):
+    with pytest.raises(ExprError):
+        evaluate(expr, {})
+
+
 def test_bang_syntax_is_a_parse_time_construct_not_an_expr_operator():
     # '!' is parser.py sugar (name!(args) as the whole assignment RHS) -
     # expr.py itself has no idea what '!' means outside of '!=', so a

@@ -114,6 +114,42 @@ def _noise(mean: float, stddev: float) -> float:
     return random.gauss(mean, stddev)
 
 
+def _uniform(low: float, high: float) -> float:
+    """A single draw, uniformly distributed over [low, high] - the
+    `random()` builtin is the fixed [0, 1] case of this."""
+    return random.uniform(low, high)
+
+
+def _poisson(lam: float) -> float:
+    """A single draw from a Poisson distribution with rate lam (the
+    expected count of independent events in one interval) - Knuth's
+    algorithm, pure Python, no numpy dependency. lam must be positive;
+    large lam (roughly > 700) is slow by this method's own nature, not a
+    guarded limit here."""
+    if lam <= 0:
+        raise ValueError(f"poisson(): lam must be greater than 0, got {lam}")
+    threshold = math.exp(-lam)
+    k = 0
+    p = 1.0
+    while True:
+        k += 1
+        p *= random.random()
+        if p <= threshold:
+            return float(k - 1)
+
+
+def _binomial(n: float, p: float) -> float:
+    """A single draw from a binomial distribution: the count of
+    successes out of n independent trials, each succeeding with
+    probability p. n must be a non-negative whole number, passed as a
+    float like every other numeric argument in this language."""
+    if n < 0 or n != int(n):
+        raise ValueError(f"binomial(): n must be a non-negative whole number, got {n}")
+    if not (0.0 <= p <= 1.0):
+        raise ValueError(f"binomial(): p must be between 0 and 1, got {p}")
+    return float(sum(1 for _ in range(int(n)) if random.random() < p))
+
+
 # The fixed set of "time-shaped" builtins - the only ones whose bang-call
 # sugar (name!(args)) also injects _t as a leading argument, matching the
 # ergonomic call shape they'd otherwise lose (linear!(20, 30, 10s), not
@@ -144,6 +180,9 @@ _FUNCTIONS: dict[str, Callable[..., Value]] = {
     "max": max,
     "random": random.random,
     "noise": _noise,
+    "uniform": _uniform,
+    "poisson": _poisson,
+    "binomial": _binomial,
     "linear": _linear,
     "square": _square,
     "triangle": _triangle,

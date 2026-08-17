@@ -296,6 +296,20 @@ def test_bang_call_with_no_args():
     assert node.return_expr.text == "noise()"
 
 
+def test_random_distribution_bang_calls_do_not_inject_t():
+    # none of these are time-shaped - a fresh draw every tick is already
+    # what live-wrapping a random function means, no _t argument to add.
+    for src, expected in [
+        ("data = uniform!(0, 1);", "uniform(0, 1)"),
+        ("data = poisson!(3);", "poisson(3)"),
+        ("data = binomial!(10, 0.5);", "binomial(10, 0.5)"),
+    ]:
+        prog = parse(src)
+        node = prog.body[0].value
+        assert isinstance(node, LiveBlock)
+        assert node.return_expr.text == expected
+
+
 def test_bare_call_without_bang_is_a_plain_expr_span():
     # no '!' - an ordinary one-shot function call, not live sugar.
     prog = parse("data = sin(t);")

@@ -114,7 +114,7 @@ Loosest to tightest binding: `or` → `and` → `not` → comparison
 | Numbers | `20`, `0.5`, `-3.2` |
 | Constants | `true`, `false`, `pi`, `e` |
 | Variables | `t`, `_t`, a `for` loop's own variable, or any name declared with `var` |
-| Functions | `sin cos abs sqrt floor ceil min max random noise` (see also [Signal-shape builtins](#signal-shape-builtins)) |
+| Functions | `sin cos abs sqrt floor ceil min max random` (see also [Signal-shape builtins](#signal-shape-builtins) and [Random distributions](#random-distributions)) |
 | `terop(cond, then, else)` | conditional expression; both branches are evaluated |
 | Duration literals | `10s`, `3m`, `500ms`, `10t` (ticks); normalized to seconds at parse time |
 | `.s` / `.m` / `.ms` | postfix unit view — `_t.s` reads a timer's value in seconds |
@@ -439,13 +439,30 @@ evaluates the call once per tick.
 | `pulse(t, low, high, period, duty)` | generalizes `square` beyond a fixed 50% split: high for the first `duty` fraction of each period (`duty` in `[0, 1]`), low for the rest |
 | `exponential(t, initial, rate)` | `initial * e^(rate·t)` — plain monotonic growth (`rate > 0`) or decay (`rate < 0`), unlike `damped_wave` (oscillates) or `linear` (ramps to a fixed target and holds) |
 | `polynomial(t, a0, a1, ...)` | `a0 + a1·t + a2·t² + ...`, any number of coefficients; zero coefficients evaluates to `0` |
-| `noise(mean, stddev)` | one Gaussian-distributed random draw; not time-shaped, no time argument |
 
 `linear`, `square`, `triangle`, `sawtooth`, `damped_wave`,
 `sinusoidal_wave`, `pulse`, `exponential`, and `polynomial` are the set
 whose `!` sugar also inserts `_t` as the first argument: `square!(0, 1,
 2s)`, not `square!(_t, 0, 1, 2s)`. Every other function's `!` passes its
 arguments exactly as written.
+
+### Random distributions
+
+Not time-shaped — no time argument, and `!` passes arguments exactly as
+written (a fresh draw every tick is already what wrapping any of these
+in `live` means, with no `_t` to add). Zero runtime dependencies: no
+`numpy`, pure `random`-module and, for `poisson`/`binomial`, pure
+Python sampling.
+
+| | |
+|---|---|
+| `noise(mean, stddev)` | one Gaussian-distributed draw |
+| `uniform(low, high)` | one draw, uniform over `[low, high]`; `random()` is the fixed `[0, 1]` case of this |
+| `poisson(lam)` | one draw from a Poisson distribution with rate `lam` — the count of independent events expected in one interval; `lam` must be greater than `0` |
+| `binomial(n, p)` | one draw from a binomial distribution — the count of successes out of `n` independent trials, each succeeding with probability `p`; `n` must be a non-negative whole number, `p` in `[0, 1]` |
+
+Building a persisted random walk out of any of these needs no dedicated
+builtin — see [Evaluation timing: static vs. live](#evaluation-timing-static-vs-live) above.
 
 ### `.shift(offset)`
 
