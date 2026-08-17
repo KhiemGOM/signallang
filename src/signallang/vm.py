@@ -53,7 +53,15 @@ class ScriptRun:
         self.master_t = 0.0
         self.vars: dict = {}
         self.timers: dict = {}  # name -> TimerState; "__live_*" names are private per-binding _t's
-        self.msg: dict = {}
+        # With a schema, the message starts fully defaulted - the same
+        # tree default_at([]) already builds for an explicit `msg =
+        # default;` statement, just applied automatically at run start
+        # instead of requiring that statement. A field assignment later
+        # in the script overwrites only that field; a bare `send;` with
+        # no assignments at all still sends a complete, schema-shaped
+        # message. Without a schema there is nothing to default from, so
+        # the message starts empty exactly as before.
+        self.msg: dict = copy.deepcopy(schema_provider.default_at([])) if schema_provider is not None else {}
         self.live_bindings: dict = {}  # path tuple -> LiveBinding
 
         self._send_ip: int | None = None
@@ -135,6 +143,19 @@ class ScriptRun:
     def _flat_scope(self, live_timer_name: str | None = None) -> dict:
         scope = dict(self.vars)
         scope["t"] = self.master_t
+        # A read-only, deep-copied snapshot of the message as statically
+        # written so far (via `field = ...;`, not `field = live {...};`),
+        # accessed like any other object value: msg.header.frame_id,
+        # msg["angular"]. Deep-copied so a `var` that captures part of it
+        # (`var h = msg.header;`) can't later be silently mutated by an
+        # unrelated field write reusing the same nested dict in place
+        # (see _set_path). Deliberately excludes any field still driven
+        # by an unresolved live binding: building that would require
+        # resolving live bindings here too, and a live field whose own
+        # expression reads msg would then need to resolve itself to
+        # build the very value it's asking for - direct recursion. `msg`
+        # is reserved (in _KEYWORDS), so it can never collide with a var.
+        scope["msg"] = copy.deepcopy(self.msg)
         for name, ts in self.timers.items():
             if name.startswith("__live_"):
                 continue

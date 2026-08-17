@@ -230,6 +230,25 @@ an array literal written directly as the whole value of a field/`send`
 assignment is always resolved against the schema (or its absence),
 never indexed in place.
 
+### `msg`
+
+When a `schema_provider` is present, the message starts fully defaulted
+— every field set to its schema zero value, from before the first
+instruction runs. A field assignment overwrites only that field; a bare
+`send;` with no assignments at all still sends a complete, schema-shaped
+message. Without a schema there is nothing to default from, and the
+message starts empty, exactly as a script with no `schema_provider`
+behaved before this existed.
+
+`msg` reads back the message as built so far — the same value `send`
+would currently emit — through the same `.`/`[...]` access as any other
+object: `msg.header.frame_id`, `msg["temperature"]`. It reflects
+whatever has been statically written (including schema defaults, if
+present) but not a field still driven by an unresolved `live` binding.
+`msg` is reserved and cannot be a `var` name; each read is an
+independent snapshot, so capturing part of it in a `var` (`var h =
+msg.header;`) is never later affected by an unrelated field write.
+
 ### Control flow
 
 ```

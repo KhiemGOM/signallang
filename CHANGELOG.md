@@ -5,6 +5,28 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- With a `schema_provider`, the message now starts fully defaulted -
+  every field at its schema zero value, before the first instruction
+  runs. A bare `send;` with no field assignments at all sends a
+  complete, schema-shaped message; a partial assignment overwrites only
+  that field. The tree-building logic already existed
+  (`SchemaProvider.default_at([])` already recursed the whole schema
+  for an explicit `msg = default;`); this applies it automatically at
+  run start instead of requiring that statement. No schema still starts
+  empty, unchanged.
+- `msg` - reads back the message as built so far (the same value `send`
+  would currently emit) through the same `.`/`[...]` access as any
+  other object value: `msg.header.frame_id`, `msg["temperature"]`.
+  Reflects schema defaults if present, and anything statically written,
+  but not a field still driven by an unresolved `live` binding (adding
+  that would mean a live field whose own expression reads `msg` would
+  need to resolve itself to build the very value it's asking for).
+  Reserved, so it can never collide with a `var`; each read is an
+  independent deep copy, so a `var` that captures part of it is never
+  later affected by an unrelated field write reusing the same nested
+  dict in place.
+
 ### Fixed
 - A `var` or `for` loop variable could silently shadow anything: an
   outer `var`, an enclosing `for` loop's own variable, even a built-in

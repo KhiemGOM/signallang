@@ -208,3 +208,80 @@ def test_json_object_as_a_positional_array_fill_element():
     schema = DictSchemaProvider({"first": 0.0, "second": 0.0})
     results, _ = run_all("send [json { a: 1, b: 2 }, 5];", schema_provider=schema)
     assert results[0].value == {"first": {"a": 1.0, "b": 2.0}, "second": 5.0}
+
+
+# -- msg starts fully defaulted when a schema is given -----------------------
+
+def test_bare_send_with_a_schema_sends_the_fully_defaulted_message():
+    # no field assignments at all - the message still starts as the
+    # schema's own default tree, not empty. default_at([]) already
+    # builds this whole-tree default for an explicit `msg = default;`;
+    # this applies it automatically at run start instead.
+    schema = DictSchemaProvider({"header": {"stamp": 0.0, "frame_id": ""}, "temperature": 0.0})
+    results, _ = run_all("send hz 1 dur 1t;", schema_provider=schema)
+    assert results[0].value == {"header": {"stamp": 0.0, "frame_id": ""}, "temperature": 0.0}
+
+
+def test_partial_field_assignment_leaves_the_rest_at_default():
+    schema = DictSchemaProvider({"temperature": 0.0, "variance": 0.0})
+    results, _ = run_all("temperature = 25.0;\nsend hz 1 dur 1t;", schema_provider=schema)
+    assert results[0].value == {"temperature": 25.0, "variance": 0.0}
+
+
+def test_bare_send_without_a_schema_still_starts_empty():
+    results, _ = run_all("send hz 1 dur 1t;")
+    assert results[0].value == {}
+
+
+def test_two_runs_sharing_a_schema_provider_do_not_alias_each_others_default_msg():
+    # regression guard for the deepcopy in ScriptRun.__init__: mutating
+    # one run's defaulted message must never affect a second run built
+    # from the same schema_provider.
+    schema = DictSchemaProvider({"header": {"frame_id": ""}})
+    run_a = compile_script('header.frame_id = "map";\nsend hz 1 dur 1t;', schema_provider=schema).new_run()
+    run_b = compile_script("send hz 1 dur 1t;", schema_provider=schema).new_run()
+    a_result = run_a.step()
+    b_result = run_b.step()
+    assert a_result.value == {"header": {"frame_id": "map"}}
+    assert b_result.value == {"header": {"frame_id": ""}}
+
+
+# -- msg.field reads back the message currently being built ------------------
+
+def test_msg_dot_access_reads_a_previously_assigned_field():
+    src = "angular = 5;\ndata = msg.angular + 1;\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 6.0
+
+
+def test_msg_reads_a_nested_path():
+    src = 'header = json { frame_id: "map" };\ndata = msg.header.frame_id;\nsend hz 1 dur 1t;'
+    results, _ = run_all(src)
+    assert results[0].value["data"] == "map"
+
+
+def test_msg_read_reflects_the_schemas_auto_filled_defaults():
+    schema = DictSchemaProvider({"temperature": 0.0, "variance": 0.0})
+    src = "variance = msg.temperature + 5;\nsend hz 1 dur 1t;"
+    results, _ = run_all(src, schema_provider=schema)
+    assert results[0].value["variance"] == 5.0
+
+
+def test_msg_access_is_deep_copied_not_aliased():
+    # a var capturing part of msg must not be silently mutated later by
+    # an unrelated field write reusing the same nested dict in place.
+    src = """
+    header = json { frame_id: "map" };
+    var h = msg.header;
+    header = json { frame_id: "odom" };
+    data = h.frame_id;
+    send hz 1 dur 1t;
+    """
+    results, _ = run_all(src)
+    assert results[0].value["data"] == "map"
+    assert results[0].value["header"]["frame_id"] == "odom"
+
+
+def test_msg_is_reserved_and_cannot_be_a_var_name():
+    with pytest.raises(ScriptError):
+        run_all("var msg = 5;")
