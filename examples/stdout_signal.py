@@ -21,7 +21,8 @@ import json
 from signallang import compile_script, run_realtime
 
 SCRIPT = """
-temperature = linear(20, 30, 10s);
+temperature = linear!(20, 30, 10s);
+jitter = noise!(0, 0.1);
 send hz 2 dur inf;
 """
 

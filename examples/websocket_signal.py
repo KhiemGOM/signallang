@@ -25,9 +25,9 @@ from signallang import compile_script
 
 SCRIPT = """
 repeat {
-    linear.x = linear(0, 1.0, 3s);
+    linear.x = linear!(0, 1.0, 3s);
     send hz 10 dur 3s;
-    linear.x = linear(1.0, 0, 3s);
+    linear.x = linear!(1.0, 0, 3s);
     send hz 10 dur 3s;
 }
 """

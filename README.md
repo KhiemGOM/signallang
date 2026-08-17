@@ -272,7 +272,8 @@ send [1, 2, 3];                  # value sugar: send this array directly
 ```
 
 `hz`, `dur`, and a bare value may appear in any order. `hz` is clamped
-to a 50Hz ceiling (`MAX_HZ`) at compile time.
+to a 50Hz ceiling (`MAX_HZ`) at compile time — raise it per-script with
+`compile_script(source, max_hz=200)`.
 
 ### Evaluation timing: static vs. live
 
@@ -459,8 +460,9 @@ test rig.
 - Only `t`, `_t`, a `for` loop's own variable, `var` names, and fields
   of the message being built are in scope. Nothing outside the value
   currently being computed is reachable.
-- `hz` is clamped to a 50Hz ceiling at compile time; `hz <= 0` is a
-  compile error, not a runtime exception.
+- `hz` is clamped to a ceiling at compile time (50, adjustable via
+  `compile_script(..., max_hz=...)`); `hz <= 0` is a compile error, not
+  a runtime exception.
 - Malformed scripts (invalid field names, wrong array shape, mismatched
   positional fill) fail at `compile_script()` or the first `step()`,
   before any value is sent.

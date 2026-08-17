@@ -5,6 +5,17 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.2.0] — 2026-08-17
 
+### Fixed
+- `examples/stdout_signal.py` and `examples/websocket_signal.py` both
+  called `linear(a, b, dur)` with 3 arguments - the pre-0.1.x sugar form
+  removed by the breaking `linear(t, a, b, dur)` change earlier in this
+  same release. Neither example actually ran: `compile_script()` itself
+  succeeded (arguments aren't evaluated until the assignment executes),
+  but the first `step()` raised `ExprError: _linear() missing 1
+  required positional argument: 'dur'`. Fixed to `linear!(a, b, dur)` in
+  both, caught by actually running each example's script through a few
+  `step()` calls rather than assuming they still worked.
+
 ### Changed
 - README restructured into a denser reference format: added a table of
   contents and a "Timers" section documenting `timer()`/`latching_timer()`
@@ -14,8 +25,19 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   "Prior art" table alongside the old "Rationale" section (same
   information, one place instead of two); trimmed narrative/rationale
   prose throughout in favor of flat rule statements. No behavior change.
+- README's `send` and Safety model sections stated the 50Hz `hz`
+  ceiling as if fixed; `compile_script(source, max_hz=...)` has always
+  accepted an override (`vm.py`'s public signature), just never
+  documented. Both sections now note it's adjustable per-script.
 
 ### Added
+- `examples/schema_signal.py` - a `schema_provider`
+  (`DictSchemaProvider`), a nested `json {}` object built fresh every
+  tick inside a `live` block, and `brown_motion!` for a persisted drift
+  field, none of which the first two examples touch on. Examples/
+  previously demonstrated none of this session's language additions
+  (`static`, `rand_walk!`/`brown_motion!`, `json {}`, `schema_provider`
+  all had zero references across both existing example files).
 - `rand_walk!(low, high)` / `brown_motion!(mean, stddev)` - bang-call
   sugar for the two accumulator recipes below, spelled out so they don't
   have to be hand-written every time. Neither exists as a plain function
