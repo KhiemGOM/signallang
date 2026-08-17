@@ -78,6 +78,34 @@ def _sinusoidal_wave(t: float, amplitude: float, period: float) -> float:
     return amplitude * math.sin(2.0 * math.pi * t / period)
 
 
+def _pulse(t: float, low: float, high: float, period: float, duty: float) -> float:
+    """A generalized square wave: high for the first `duty` fraction of
+    each period, low for the rest. `square` is the fixed-50%-duty case;
+    this is that same shape with the split exposed as a parameter."""
+    if period <= 0:
+        raise ValueError(f"pulse(): period must be greater than 0, got {period}")
+    if not (0.0 <= duty <= 1.0):
+        raise ValueError(f"pulse(): duty must be between 0 and 1, got {duty}")
+    return high if (t % period) < period * duty else low
+
+
+def _exponential(t: float, initial: float, rate: float) -> float:
+    """Plain exponential growth (rate > 0) or decay (rate < 0):
+    initial * e^(rate * t). Monotonic and unbounded, unlike damped_wave
+    (which oscillates while decaying) or linear (which ramps to a fixed
+    target and holds)."""
+    return initial * math.exp(rate * t)
+
+
+def _polynomial(t: float, *coefficients: float) -> float:
+    """a0 + a1*t + a2*t^2 + ... for however many coefficients are given,
+    evaluated by Horner's method. No coefficients at all evaluates to 0."""
+    result = 0.0
+    for c in reversed(coefficients):
+        result = result * t + c
+    return result
+
+
 def _noise(mean: float, stddev: float) -> float:
     """A single Gaussian-distributed random draw - call it inside a live
     context (`noise!(mean, stddev)`) for fresh jitter every tick, or bare
@@ -92,7 +120,17 @@ def _noise(mean: float, stddev: float) -> float:
 # linear!(_t, 20, 30, 10s)). Every other function's bang call wraps its
 # arguments exactly as written - see parser.py's _try_parse_bang_call.
 TIME_SHAPED_FUNCTIONS = frozenset(
-    {"linear", "square", "triangle", "sawtooth", "damped_wave", "sinusoidal_wave"}
+    {
+        "linear",
+        "square",
+        "triangle",
+        "sawtooth",
+        "damped_wave",
+        "sinusoidal_wave",
+        "pulse",
+        "exponential",
+        "polynomial",
+    }
 )
 
 _FUNCTIONS: dict[str, Callable[..., Value]] = {
@@ -112,6 +150,9 @@ _FUNCTIONS: dict[str, Callable[..., Value]] = {
     "sawtooth": _sawtooth,
     "damped_wave": _damped_wave,
     "sinusoidal_wave": _sinusoidal_wave,
+    "pulse": _pulse,
+    "exponential": _exponential,
+    "polynomial": _polynomial,
     # terop(cond, then, else) - a plain named function, not a `? :` symbol.
     # Both branches are evaluated eagerly (this parser evaluates as it
     # parses, it doesn't build an AST to defer either side) - a

@@ -584,7 +584,8 @@ class Parser:
         sin!(t);` isn't supported, matching how the old linear(...) sugar
         was also whole-RHS-only). Desugars to `live { return name(args);
         }` - or, for the fixed set of TIME_SHAPED_FUNCTIONS (linear/
-        square/triangle/sawtooth/damped_wave/sinusoidal_wave), `live {
+        square/triangle/sawtooth/damped_wave/sinusoidal_wave/pulse/
+        exponential/polynomial), `live {
         return name(_t, args); }`, injecting the elapsed-time argument
         those specific builtins expect first so the call site keeps the
         ergonomic shape it would otherwise lose (`linear!(20, 30, 10s)`,

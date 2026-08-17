@@ -122,6 +122,13 @@ def test_terop_dead_branch_still_raises():
         ("sinusoidal_wave(0, 5, 1)", {}, 0.0),  # sin(0) == 0
         ("sinusoidal_wave(0.25, 5, 1)", {}, 5.0),  # quarter period -> peak
         ("sinusoidal_wave(1, 5, 1)", {}, 0.0),  # full period -> back to 0
+        ("pulse(0, 0, 1, 2, 0.25)", {}, 1.0),  # inside the high window
+        ("pulse(0.5, 0, 1, 2, 0.25)", {}, 0.0),  # just past it
+        ("pulse(2, 0, 1, 2, 0.25)", {}, 1.0),  # wraps to the next period
+        ("exponential(0, 2, 1)", {}, 2.0),  # t=0 -> just the initial value
+        ("exponential(1, 1, 0)", {}, 1.0),  # rate=0 -> constant
+        ("polynomial(3, 1, 2, 3)", {}, 34.0),  # 1 + 2*3 + 3*9 == 34
+        ("polynomial(5)", {}, 0.0),  # no coefficients -> 0
     ],
 )
 def test_signal_shape_builtins(expr, variables, expected):
@@ -138,6 +145,9 @@ def test_signal_shape_builtins(expr, variables, expected):
         "sawtooth(0, 0, 1, 0)",
         "damped_wave(0, 1, 0, 0)",
         "sinusoidal_wave(0, 1, 0)",
+        "pulse(0, 0, 1, 0, 0.5)",  # period must be > 0
+        "pulse(0, 0, 1, 2, -0.1)",  # duty must be in [0, 1]
+        "pulse(0, 0, 1, 2, 1.1)",
     ],
 )
 def test_signal_shape_builtins_reject_non_positive_duration(expr):

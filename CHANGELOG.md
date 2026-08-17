@@ -5,6 +5,18 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Three new signal-shape builtins, same pure-function-of-elapsed-time
+  shape as `square`/`linear`/etc., part of `TIME_SHAPED_FUNCTIONS` (so
+  `!` sugar injects `_t` as the first argument): `pulse(t, low, high,
+  period, duty)` generalizes `square` past a fixed 50% split - high for
+  the first `duty` fraction of the period, low for the rest.
+  `exponential(t, initial, rate)` is `initial * e^(rate·t)` - plain
+  monotonic growth or decay, distinct from `damped_wave` (oscillates
+  while decaying) and `linear` (ramps to a fixed target and holds).
+  `polynomial(t, a0, a1, ...)` is `a0 + a1·t + a2·t² + ...` for any
+  number of coefficients, via Horner's method.
+
 ### Fixed
 - `config.retries = 5;`, where `config` is a `var` holding an object,
   silently did the wrong thing: `_parse_path_stmt` only ever checked a

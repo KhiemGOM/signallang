@@ -362,8 +362,9 @@ field = name!(args);
 Recognized only when `name!(args)` is the entire right-hand side.
 Equivalent to `field = live { return name(args); };`. For the fixed set
 of time-shaped builtins — `linear`, `square`, `triangle`, `sawtooth`,
-`damped_wave`, `sinusoidal_wave` — the elapsed-time argument is also
-inserted as the first argument: `linear!(20, 30, 10s)` is equivalent to
+`damped_wave`, `sinusoidal_wave`, `pulse`, `exponential`, `polynomial`
+— the elapsed-time argument is also inserted as the first argument:
+`linear!(20, 30, 10s)` is equivalent to
 `live { return linear(_t, 20, 30, 10s); };`. For every other function,
 arguments are passed exactly as written: `sin!(t)` is equivalent to
 `live { return sin(t); };`.
@@ -398,12 +399,16 @@ evaluates the call once per tick.
 | `sawtooth(t, low, high, period)` | ramps low → high over the whole period, then resets to low |
 | `sinusoidal_wave(t, amplitude, period)` | `amplitude * sin(2π·t/period)` |
 | `damped_wave(t, amplitude, decay, period)` | `amplitude * e^(-decay·t) * sin(2π·t/period)` — a decaying sinusoid; the natural response of an underdamped 2nd-order system such as an RLC circuit |
+| `pulse(t, low, high, period, duty)` | generalizes `square` beyond a fixed 50% split: high for the first `duty` fraction of each period (`duty` in `[0, 1]`), low for the rest |
+| `exponential(t, initial, rate)` | `initial * e^(rate·t)` — plain monotonic growth (`rate > 0`) or decay (`rate < 0`), unlike `damped_wave` (oscillates) or `linear` (ramps to a fixed target and holds) |
+| `polynomial(t, a0, a1, ...)` | `a0 + a1·t + a2·t² + ...`, any number of coefficients; zero coefficients evaluates to `0` |
 | `noise(mean, stddev)` | one Gaussian-distributed random draw; not time-shaped, no time argument |
 
-`linear`, `square`, `triangle`, `sawtooth`, `damped_wave`, and
-`sinusoidal_wave` are the set whose `!` sugar also inserts `_t` as the
-first argument: `square!(0, 1, 2s)`, not `square!(_t, 0, 1, 2s)`. Every
-other function's `!` passes its arguments exactly as written.
+`linear`, `square`, `triangle`, `sawtooth`, `damped_wave`,
+`sinusoidal_wave`, `pulse`, `exponential`, and `polynomial` are the set
+whose `!` sugar also inserts `_t` as the first argument: `square!(0, 1,
+2s)`, not `square!(_t, 0, 1, 2s)`. Every other function's `!` passes its
+arguments exactly as written.
 
 ### `.shift(offset)`
 
