@@ -6,6 +6,20 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `discrete_uniform(low, high)` - a random-distribution builtin like
+  `uniform`, but draws a whole number from `[low, high]` inclusive
+  rather than the continuum in between; both bounds must themselves be
+  whole numbers. The building block for a fixed-step-size random walk
+  (`discrete_uniform(-1, 1)`).
+- README "Random walk / Brownian motion" recipes: both are `static`
+  locals plus one of the distribution builtins above, not functions -
+  neither can be, since a function call has no memory of the last time
+  it was called, and both need a value that persists and accumulates
+  across ticks. The distinction between them is real, not just naming:
+  a random walk in the classic sense steps on a discrete lattice
+  (`discrete_uniform`); Brownian motion is its continuous-value
+  analogue, standardly simulated in discrete time as an accumulated
+  Gaussian increment (`noise`) each tick.
 - Three new random-distribution builtins, none time-shaped (no time
   argument, `!` passes arguments exactly as written - already free for
   any function, not just this set): `uniform(low, high)` (one draw over

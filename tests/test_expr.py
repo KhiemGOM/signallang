@@ -169,6 +169,31 @@ def test_uniform_stays_within_bounds():
         assert 2.0 <= v <= 5.0
 
 
+def test_discrete_uniform_stays_within_bounds_and_is_always_whole():
+    for _ in range(200):
+        v = evaluate("discrete_uniform(-1, 1)", {})
+        assert isinstance(v, float)
+        assert v in (-1.0, 0.0, 1.0)
+
+
+def test_discrete_uniform_single_value_range_is_always_that_value():
+    for _ in range(20):
+        assert evaluate("discrete_uniform(4, 4)", {}) == 4.0
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "discrete_uniform(0.5, 2)",  # low must be a whole number
+        "discrete_uniform(0, 2.5)",  # high must be a whole number
+        "discrete_uniform(3, 1)",  # low must not be greater than high
+    ],
+)
+def test_discrete_uniform_rejects_invalid_arguments(expr):
+    with pytest.raises(ExprError):
+        evaluate(expr, {})
+
+
 def test_poisson_returns_a_non_negative_whole_number_as_a_float():
     for _ in range(200):
         v = evaluate("poisson(3)", {})

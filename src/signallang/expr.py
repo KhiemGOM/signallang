@@ -120,6 +120,20 @@ def _uniform(low: float, high: float) -> float:
     return random.uniform(low, high)
 
 
+def _discrete_uniform(low: float, high: float) -> float:
+    """A single draw, uniform over the whole numbers in [low, high]
+    inclusive (not the continuum in between, unlike uniform) - both
+    bounds must themselves be whole numbers, passed as floats like any
+    other numeric argument in this language. The building block for a
+    fixed-step-size random walk: discrete_uniform(-1, 1) draws a fresh
+    -1, 0, or 1 each call."""
+    if low != int(low) or high != int(high):
+        raise ValueError(f"discrete_uniform(): low and high must be whole numbers, got {low}, {high}")
+    if low > high:
+        raise ValueError(f"discrete_uniform(): low must not be greater than high, got {low}, {high}")
+    return float(random.randint(int(low), int(high)))
+
+
 def _poisson(lam: float) -> float:
     """A single draw from a Poisson distribution with rate lam (the
     expected count of independent events in one interval) - Knuth's
@@ -181,6 +195,7 @@ _FUNCTIONS: dict[str, Callable[..., Value]] = {
     "random": random.random,
     "noise": _noise,
     "uniform": _uniform,
+    "discrete_uniform": _discrete_uniform,
     "poisson": _poisson,
     "binomial": _binomial,
     "linear": _linear,

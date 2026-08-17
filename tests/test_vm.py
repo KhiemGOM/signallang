@@ -163,6 +163,26 @@ def test_live_static_random_walk_pattern():
         running = v
 
 
+def test_live_static_discrete_random_walk_pattern():
+    # the discrete-lattice sibling: same pattern, discrete_uniform(-1, 1)
+    # instead of noise() - each step is exactly -1, 0, or 1, not a draw
+    # from the continuum.
+    src = """
+    walk = live {
+        static value = 0;
+        value = value + discrete_uniform(-1, 1);
+        return value;
+    };
+    send hz 1 dur 20t;
+    """
+    results, _ = run_all(src)
+    values = [r.value["walk"] for r in results]
+    running = 0.0
+    for v in values:
+        assert (v - running) in (-1.0, 0.0, 1.0)
+        running = v
+
+
 def test_timer_reset_zeros_eager_timer_immediately():
     src = "var mt = timer();\nsend hz 1 dur 1t;\nmt.reset();\ndata = mt.s;\nsend hz 1 dur 1t;"
     results, _ = run_all(src)

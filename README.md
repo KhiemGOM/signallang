@@ -458,11 +458,37 @@ Python sampling.
 |---|---|
 | `noise(mean, stddev)` | one Gaussian-distributed draw |
 | `uniform(low, high)` | one draw, uniform over `[low, high]`; `random()` is the fixed `[0, 1]` case of this |
+| `discrete_uniform(low, high)` | one draw, uniform over the whole numbers in `[low, high]` inclusive (not the continuum in between, unlike `uniform`); both bounds must be whole numbers |
 | `poisson(lam)` | one draw from a Poisson distribution with rate `lam` — the count of independent events expected in one interval; `lam` must be greater than `0` |
 | `binomial(n, p)` | one draw from a binomial distribution — the count of successes out of `n` independent trials, each succeeding with probability `p`; `n` must be a non-negative whole number, `p` in `[0, 1]` |
 
-Building a persisted random walk out of any of these needs no dedicated
-builtin — see [Evaluation timing: static vs. live](#evaluation-timing-static-vs-live) above.
+**Random walk / Brownian motion**
+
+Neither is a function — both need a value that persists and accumulates
+across ticks, which no plain function call can do (a function call has
+no memory of the last time it was called). They're [`static`
+locals](#evaluation-timing-static-vs-live) plus one of the draws above,
+not builtins:
+
+```
+rand_walk = live {
+    static value = 0;
+    value = value + discrete_uniform(-1, 1);  # fixed step size
+    return value;
+};
+
+brown_motion = live {
+    static value = 0;
+    value = value + noise(0, 1);  # Gaussian increment
+    return value;
+};
+```
+
+The distinction is real, not just naming: a random walk in the classic
+sense steps on a discrete lattice (`discrete_uniform`, above); Brownian
+motion is its continuous-value analogue, standardly simulated in
+discrete time as an accumulated Gaussian increment (`noise`) each tick
+— which is what a `live` block, ticking once per `send`, already is.
 
 ### `.shift(offset)`
 
