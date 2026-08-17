@@ -65,6 +65,20 @@ class Reassign:
 
 
 @dataclass
+class VarIndexAssign:
+    """`name(.ident | [expr])+ = expr;`, where `name` is an existing var -
+    mutates the var's own array/object value in place, rather than
+    writing a message field. Message-field paths and var-index
+    assignment share the same `.`/`[` syntax at the statement level;
+    which one a given statement is gets disambiguated by whether the
+    leading name is a declared var, not by any different syntax."""
+
+    name: str
+    accessors: list  # list[tuple] - ("dot", str) | ("index", ExprSpan)
+    value: ExprSpan
+
+
+@dataclass
 class Assign:
     path: list  # list[str] - dotted field path, e.g. ["linear", "x"]
     value: object  # Value

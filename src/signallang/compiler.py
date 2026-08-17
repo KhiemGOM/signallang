@@ -24,6 +24,7 @@ from .ast_nodes import (
     TimerDecl,
     TimerReset,
     VarDecl,
+    VarIndexAssign,
 )
 from .errors import ScriptError
 
@@ -37,6 +38,13 @@ MAX_HZ = 50.0  # mirrors dashboard/graph/fake_publisher.py's MAX_RATE_HZ - this
 @dataclass
 class SetVar:
     name: str
+    expr: ExprSpan
+
+
+@dataclass
+class SetVarIndex:
+    name: str
+    accessors: list  # list[tuple] - ("dot", str) | ("index", ExprSpan), passed through unchanged from the AST
     expr: ExprSpan
 
 
@@ -123,6 +131,8 @@ class Compiler:
     def _compile_stmt(self, s) -> None:
         if isinstance(s, (VarDecl, Reassign)):
             self._emit(SetVar(s.name, s.value))
+        elif isinstance(s, VarIndexAssign):
+            self._emit(SetVarIndex(s.name, s.accessors, s.value))
         elif isinstance(s, TimerDecl):
             self._emit(CreateTimer(s.name, s.kind))
         elif isinstance(s, TimerReset):

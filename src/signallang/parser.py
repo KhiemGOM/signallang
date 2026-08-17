@@ -23,6 +23,7 @@ from .ast_nodes import (
     TimerDecl,
     TimerReset,
     VarDecl,
+    VarIndexAssign,
 )
 from .errors import ScriptError
 from .expr import RESERVED_NAMES, TIME_SHAPED_FUNCTIONS
@@ -248,22 +249,56 @@ class Parser:
         return VarDecl(name=name, value=value)
 
     def _parse_path_stmt(self):
+        """Message-field paths (`header.frame_id = "map";`) and var-index
+        mutation (`config.retries = 5;`, `arr[0] = 5;`, where `config`/
+        `arr` are declared vars) share this same `.`/`[` syntax at the
+        statement level - which one a given statement compiles to is
+        decided entirely by whether the leading name is a declared var,
+        never by anything different in the syntax itself. A leading name
+        that IS a var accepts both `.ident` and `[expr]` accessors,
+        mixed and chained freely (`a.b[0].c = 5;`); a leading name that
+        is NOT a var only accepts `.ident` (message fields are addressed
+        by name, never by index - `[...]` there is a clear error, not a
+        confusing 'expected =')."""
         path = [self._parse_path_ident()]
-        while self._peek_char() == ".":
-            self.pos += 1
-            ident = self._parse_ident_or_keyword_reset()
-            if ident == "reset":
-                self._expect_char("(")
-                self._expect_char(")")
-                self._expect_char(";")
-                if len(path) != 1:
-                    raise ScriptError("'.reset()' only applies to a single timer name", self.pos)
-                return TimerReset(name=path[0])
-            path.append(ident)
+        is_var = path[0] in self.known_vars
+        accessors: list = []
+        while True:
+            c = self._peek_char()
+            if c == ".":
+                self.pos += 1
+                ident = self._parse_ident_or_keyword_reset()
+                if ident == "reset":
+                    self._expect_char("(")
+                    self._expect_char(")")
+                    self._expect_char(";")
+                    if len(path) != 1 or accessors:
+                        raise ScriptError("'.reset()' only applies to a single timer name", self.pos)
+                    return TimerReset(name=path[0])
+                if is_var:
+                    accessors.append(("dot", ident))
+                else:
+                    path.append(ident)
+                continue
+            if c == "[":
+                if not is_var:
+                    raise ScriptError(
+                        f"'[...]' assignment is only valid on a var holding an array/object - "
+                        f"'{path[0]}' is a message field, not a var",
+                        self.pos,
+                    )
+                self.pos += 1
+                index_expr = self._scan_expr_span("]")
+                self._expect_char("]")
+                accessors.append(("index", index_expr))
+                continue
+            break
         self._expect_char("=")
-        if len(path) == 1 and path[0] in self.known_vars:
+        if is_var:
             value = self._scan_expr_span(";")
             self._expect_char(";")
+            if accessors:
+                return VarIndexAssign(name=path[0], accessors=accessors, value=value)
             return Reassign(name=path[0], value=value)
         value = self._parse_value(";")
         self._expect_char(";")

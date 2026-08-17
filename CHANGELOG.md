@@ -5,6 +5,25 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `config.retries = 5;`, where `config` is a `var` holding an object,
+  silently did the wrong thing: `_parse_path_stmt` only ever checked a
+  *single-segment* path against declared vars, so a multi-segment path
+  starting with a var name fell straight through to the message-field
+  write path instead - writing an unrelated top-level field named
+  "config" into the published message, while the actual `config` var
+  was never touched at all. No error, no warning, just a wrong result
+  and a phantom field in the output. Fixed by checking whether the
+  *leading* name is a declared var, independent of how many accessors
+  follow: `name(.ident | [expr])+ = expr;` now mutates that var's own
+  array/object value in place when the leading name is a var, and still
+  writes a message field when it isn't - both forms share the same
+  syntax, disambiguated only by that one check, never by anything
+  different in the grammar. Also adds bracket assignment (`arr[0] =
+  5;`), not just dot assignment, and rejects `[...]` assignment outright
+  on an actual message-field path (fields are addressed by name, never
+  by index).
+
 ### Added
 - With a `schema_provider`, the message now starts fully defaulted -
   every field at its schema zero value, before the first instruction

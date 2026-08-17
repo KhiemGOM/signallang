@@ -285,3 +285,76 @@ def test_msg_access_is_deep_copied_not_aliased():
 def test_msg_is_reserved_and_cannot_be_a_var_name():
     with pytest.raises(ScriptError):
         run_all("var msg = 5;")
+
+
+# -- assigning into a var-held array/object -----------------------------
+
+def test_dot_assign_into_a_var_held_object():
+    # regression test: config.retries = 5; used to silently write an
+    # unrelated top-level message field named "config" instead of
+    # mutating the var, since only single-segment paths were ever
+    # checked against known_vars.
+    src = "var config = json { retries: 3 };\nconfig.retries = 5;\ndata = config.retries;\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value == {"data": 5.0}  # no phantom "config" field in the message
+
+
+def test_bracket_assign_into_a_var_held_array():
+    src = "var arr = [1, 2, 3];\narr[1] = 99;\ndata = arr[1];\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 99.0
+
+
+def test_chained_dot_and_bracket_assign():
+    src = (
+        "var config = json { points: [1, 2, json { x: 0 }] };\n"
+        "config.points[2].x = 42;\n"
+        "data = config.points[2].x;\n"
+        "send hz 1 dur 1t;"
+    )
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 42.0
+
+
+def test_intermediate_missing_dict_key_auto_vivifies():
+    src = 'var config = json {};\nconfig.header.frame_id = "map";\ndata = config.header.frame_id;\nsend hz 1 dur 1t;'
+    results, _ = run_all(src)
+    assert results[0].value["data"] == "map"
+
+
+def test_auto_vivify_does_not_clobber_an_existing_list():
+    # regression test for the auto-vivify fix itself: walking .points
+    # (an existing array) must never replace it with {} just because
+    # it isn't a dict - only a genuinely MISSING key auto-vivifies.
+    src = "var config = json { points: [1, 2, 3] };\nconfig.points[0] = 99;\ndata = config.points;\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == [99.0, 2.0, 3.0]
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "var arr = [1, 2];\narr[5] = 1;\nsend hz 1 dur 1t;",  # out of range
+        'var arr = [1, 2];\narr["a"] = 1;\nsend hz 1 dur 1t;',  # string index into a list
+        "var config = json {a: 1};\nconfig[0] = 1;\nsend hz 1 dur 1t;",  # number key into an object
+        "var x = 5;\nx.y = 1;\nsend hz 1 dur 1t;",  # not an object at all
+    ],
+)
+def test_var_index_assign_type_errors(src):
+    with pytest.raises(ScriptError):
+        run_all(src)
+
+
+def test_bracket_assign_on_a_message_field_is_rejected_at_parse_time():
+    # message fields are addressed by name, never by index - only a var
+    # holding an array/object supports [...] assignment.
+    with pytest.raises(ScriptError):
+        compile_script("header[0] = 5;")
+
+
+def test_msg_prefixed_field_assignment_still_works():
+    # unaffected by the var-index rewrite of _parse_path_stmt - "msg" is
+    # never a declared var (it's reserved), so this stays a plain
+    # message-field write, exactly as before.
+    results, _ = run_all("msg.angular = 5;\nsend hz 1 dur 1t;")
+    assert results[0].value == {"angular": 5.0}

@@ -197,6 +197,27 @@ recognized only when the value being accessed is an object — it takes
 priority there over the fixed postfix operator names (`.s`, `.scale`,
 ...), none of which mean anything on an object.
 
+The same accessors are assignable, mutating the var's array/object value
+in place:
+
+```
+var config = json { points: [1, 2, json { x: 0 }] };
+config.points[2].x = 42;      # mutates config directly
+arr[0] = 99;
+```
+
+`name(.ident | [expr])+ = expr;` is only recognized when `name` is a
+declared `var` — a message-field path (`header.frame_id = "map";`) uses
+the identical dotted syntax, and which one a given statement is depends
+entirely on whether the leading name is a `var`, not on anything
+different in the syntax itself. Bracket assignment specifically requires
+a `var`: message fields are addressed by name, never by index, so
+`header[0] = 5;` (`header` not a `var`) is a compile-time error. A
+missing object key encountered while walking to an intermediate accessor
+auto-vivifies an empty object, mirroring how a message-field path
+already auto-creates intermediate objects; an array index is always
+bounds-checked strictly and never auto-extended.
+
 An array index must be a whole number within range; an object key that
 does not exist is a compile- or eval-time `ExprError`, not `null`/`None`.
 Arithmetic, ordering, and the numeric postfix operators all reject an

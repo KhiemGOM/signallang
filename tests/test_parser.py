@@ -26,6 +26,19 @@ def test_var_decl_and_reassign():
     assert prog.body[1].name == "x"
 
 
+def test_var_index_assign_ast_shape():
+    from signallang.ast_nodes import VarIndexAssign
+
+    prog = parse('var config = json { a: 1 };\nconfig.a[0] = 5;')
+    node = prog.body[1]
+    assert isinstance(node, VarIndexAssign)
+    assert node.name == "config"
+    assert node.accessors[0] == ("dot", "a")
+    assert node.accessors[1][0] == "index"
+    assert node.accessors[1][1].text == "0"
+    assert node.value.text == "5"
+
+
 def test_reassign_without_prior_var_is_a_field_assign():
     prog = parse("data = 1;")
     assert isinstance(prog.body[0], Assign)

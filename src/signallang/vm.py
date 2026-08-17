@@ -25,6 +25,7 @@ from .compiler import (
     SendInstr,
     SetField,
     SetVar,
+    SetVarIndex,
     compile_program,
 )
 from .errors import ScriptError
@@ -85,6 +86,9 @@ class ScriptRun:
     def _exec_instant(self, instr) -> None:
         if isinstance(instr, SetVar):
             self.vars[instr.name] = self._eval(instr.expr)
+            self.ip += 1
+        elif isinstance(instr, SetVarIndex):
+            self._apply_var_index(instr.name, instr.accessors, instr.expr)
             self.ip += 1
         elif isinstance(instr, SetField):
             self._apply_field(instr.path, instr.value)
@@ -169,6 +173,75 @@ class ScriptRun:
         if extra:
             scope.update(extra)
         return expr.evaluate(span.text, scope)
+
+    # -- var-held array/object mutation --------------------------------
+
+    def _apply_var_index(self, name: str, accessors: list, value_expr: ExprSpan) -> None:
+        """`config.retries = 5;` / `arr[0] = 5;`, where `name` is a
+        declared var - walks `accessors` into the var's own array/object
+        value and mutates it in place (Python lists/dicts are mutable,
+        so self.vars[name] still points at the same top-level object
+        afterward - no write-back needed). A missing dict key during the
+        walk (not the final accessor) auto-vivifies an empty object,
+        mirroring how a message-field path already auto-creates
+        intermediate dicts; an array index is always bounds-checked
+        strictly, never auto-extended."""
+        value = self._eval(value_expr)
+        container = self.vars[name]
+        for kind, key in accessors[:-1]:
+            if kind == "dot":
+                if not isinstance(container, dict):
+                    raise ScriptError(f"cannot access '.{key}' on '{name}' - not an object at that point")
+                if key not in container:
+                    # auto-vivify only a genuinely missing key - an
+                    # EXISTING value (a list, say, walked further by an
+                    # upcoming [index] accessor) must never be clobbered
+                    # just for not being a dict itself.
+                    container[key] = {}
+                container = container[key]
+            else:
+                container = self._var_index_read(name, container, self._eval(key))
+        last_kind, last_key = accessors[-1]
+        if last_kind == "dot":
+            if not isinstance(container, dict):
+                raise ScriptError(f"cannot assign '.{last_key}' on '{name}' - not an object at that point")
+            container[last_key] = value
+        else:
+            self._var_index_write(name, container, self._eval(last_key), value)
+
+    def _var_index_read(self, name: str, container, index_value):
+        if isinstance(container, list):
+            i = self._var_list_index(name, index_value, len(container))
+            return container[i]
+        if isinstance(container, dict):
+            key = self._var_dict_key(name, index_value)
+            if key not in container:
+                raise ScriptError(f"'{name}' has no key {key!r} at that point")
+            return container[key]
+        raise ScriptError(f"cannot index into '{name}' - not an array/object at that point")
+
+    def _var_index_write(self, name: str, container, index_value, value) -> None:
+        if isinstance(container, list):
+            i = self._var_list_index(name, index_value, len(container))
+            container[i] = value
+            return
+        if isinstance(container, dict):
+            container[self._var_dict_key(name, index_value)] = value
+            return
+        raise ScriptError(f"cannot assign into '{name}' - not an array/object at that point")
+
+    def _var_list_index(self, name: str, index_value, length: int) -> int:
+        if not isinstance(index_value, float):
+            raise ScriptError(f"array index into '{name}' must be a number")
+        i = int(index_value)
+        if i != index_value or i < 0 or i >= length:
+            raise ScriptError(f"array index {index_value} out of range on '{name}' (length {length})")
+        return i
+
+    def _var_dict_key(self, name: str, index_value) -> str:
+        if not isinstance(index_value, str):
+            raise ScriptError(f"object key into '{name}' must be a string")
+        return index_value
 
     # -- fields -----------------------------------------------------------
 
