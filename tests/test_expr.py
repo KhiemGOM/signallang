@@ -74,6 +74,98 @@ def test_boolean_operators(expr, variables, expected):
     assert evaluate(expr, variables) == pytest.approx(expected)
 
 
+# -- Int vs Float ------------------------------------------------------------
+
+def test_int_literal_is_a_genuine_int():
+    v = evaluate("5", {})
+    assert isinstance(v, int) and not isinstance(v, bool)
+    assert v == 5
+
+
+def test_float_literal_is_a_genuine_float():
+    v = evaluate("5.0", {})
+    assert isinstance(v, float)
+    assert v == 5.0
+
+
+@pytest.mark.parametrize(
+    "expr, expected_type",
+    [
+        ("2 + 3", int),  # Int + Int -> Int
+        ("2 + 3.0", float),  # mixed -> Float
+        ("2.0 + 3", float),
+        ("2 - 3", int),
+        ("2 * 3", int),
+        ("2 * 3.0", float),
+        ("10 % 3", int),
+        ("2 / 1", float),  # / always Float, even Int/Int
+        ("4 / 2", float),
+        ("-5", int),
+        ("-5.0", float),
+    ],
+)
+def test_arithmetic_promotion(expr, expected_type):
+    v = evaluate(expr, {})
+    assert type(v) is expected_type
+
+
+def test_division_by_int_is_always_float():
+    assert evaluate("5 / 2", {}) == 2.5
+    assert isinstance(evaluate("4 / 2", {}), float)
+
+
+def test_floordiv_is_a_function_not_an_operator():
+    # `//` is already the language's comment marker (stripped before any
+    # expression is parsed) - it can never double as a division operator
+    # without silently eating the rest of the line, so floor division is
+    # a plain function instead.
+    v = evaluate("floordiv(7, 2)", {})
+    assert v == 3
+    assert isinstance(v, int) and not isinstance(v, bool)
+    assert evaluate("floordiv(7.5, 2)", {}) == 3
+    assert evaluate("floordiv(-7, 2)", {}) == -4
+
+
+def test_floordiv_by_zero_is_a_clear_error():
+    with pytest.raises(ExprError):
+        evaluate("floordiv(5, 0)", {})
+
+
+def test_floor_and_ceil_return_int():
+    v = evaluate("floor(5.7)", {})
+    assert isinstance(v, int) and not isinstance(v, bool)
+    assert v == 5
+    v = evaluate("ceil(5.2)", {})
+    assert isinstance(v, int) and not isinstance(v, bool)
+    assert v == 6
+
+
+def test_int_and_float_compare_equal_across_types():
+    assert evaluate("5 == 5.0", {}) is True
+    assert evaluate("5 < 5.5", {}) is True
+
+
+def test_int_var_round_trips_without_forced_float_coercion():
+    v = evaluate("i", {"i": 7})
+    assert isinstance(v, int) and not isinstance(v, bool)
+    assert v == 7
+
+
+def test_duration_literal_is_always_float_even_without_a_decimal_point():
+    v = evaluate("10s", {})
+    assert isinstance(v, float)
+    assert v == 10.0
+    v = evaluate("500ms", {})
+    assert isinstance(v, float)
+    assert v == 0.5
+
+
+def test_terop_can_return_an_int_without_it_decaying_to_a_float():
+    result = evaluate("terop(true, 5, 6.0)", {})
+    assert isinstance(result, int) and not isinstance(result, bool)
+    assert result == 5
+
+
 # -- bool is a real type, not disguised 1.0/0.0 -----------------------------
 
 @pytest.mark.parametrize(
@@ -254,13 +346,13 @@ def test_uniform_stays_within_bounds():
 def test_discrete_uniform_stays_within_bounds_and_is_always_whole():
     for _ in range(200):
         v = evaluate("discrete_uniform(-1, 1)", {})
-        assert isinstance(v, float)
-        assert v in (-1.0, 0.0, 1.0)
+        assert isinstance(v, int) and not isinstance(v, bool)
+        assert v in (-1, 0, 1)
 
 
 def test_discrete_uniform_single_value_range_is_always_that_value():
     for _ in range(20):
-        assert evaluate("discrete_uniform(4, 4)", {}) == 4.0
+        assert evaluate("discrete_uniform(4, 4)", {}) == 4
 
 
 @pytest.mark.parametrize(
@@ -276,12 +368,11 @@ def test_discrete_uniform_rejects_invalid_arguments(expr):
         evaluate(expr, {})
 
 
-def test_poisson_returns_a_non_negative_whole_number_as_a_float():
+def test_poisson_returns_a_non_negative_whole_number():
     for _ in range(200):
         v = evaluate("poisson(3)", {})
-        assert isinstance(v, float)
-        assert v >= 0.0
-        assert v == int(v)
+        assert isinstance(v, int) and not isinstance(v, bool)
+        assert v >= 0
 
 
 def test_poisson_rejects_non_positive_lam():
@@ -294,17 +385,16 @@ def test_poisson_rejects_non_positive_lam():
 def test_binomial_stays_within_n_trials():
     for _ in range(200):
         v = evaluate("binomial(10, 0.5)", {})
-        assert isinstance(v, float)
-        assert 0.0 <= v <= 10.0
-        assert v == int(v)
+        assert isinstance(v, int) and not isinstance(v, bool)
+        assert 0 <= v <= 10
 
 
 def test_binomial_zero_probability_is_always_zero():
-    assert evaluate("binomial(10, 0)", {}) == 0.0
+    assert evaluate("binomial(10, 0)", {}) == 0
 
 
 def test_binomial_certain_probability_is_always_n():
-    assert evaluate("binomial(10, 1)", {}) == 10.0
+    assert evaluate("binomial(10, 1)", {}) == 10
 
 
 @pytest.mark.parametrize(

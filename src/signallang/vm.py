@@ -100,7 +100,7 @@ class ScriptRun:
     def _exec_instant(self, instr) -> None:
         if isinstance(instr, SeedInstr):
             value = self._eval(instr.value)
-            if not isinstance(value, (float, str)):
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
                 raise ScriptError("seed() needs a number or string")
             random.seed(value)
             self.ip += 1
@@ -272,7 +272,7 @@ class ScriptRun:
         raise ScriptError(f"cannot assign into '{name}' - not an array/object at that point")
 
     def _var_list_index(self, name: str, index_value, length: int) -> int:
-        if not isinstance(index_value, float):
+        if not expr.is_number(index_value):
             raise ScriptError(f"array index into '{name}' must be a number")
         i = int(index_value)
         if i != index_value or i < 0 or i >= length:

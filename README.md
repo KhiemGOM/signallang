@@ -30,7 +30,8 @@ run.step()   # StepResult(value={'temperature': 20.5}, hz=2.0)
 - [Runtime model](#runtime-model)
 - [Language reference](#language-reference)
   - [Fields and values](#fields-and-values) · [Expressions](#expressions) ·
-    [Bool](#bool) · [Strings](#strings) · [Arrays and objects](#arrays-and-objects) ·
+    [Int and Float](#int-and-float) · [Bool](#bool) · [Strings](#strings) ·
+    [Arrays and objects](#arrays-and-objects) ·
     [`msg`](#msg) · [Control flow](#control-flow) · [`send`](#send) ·
     [`wait`](#wait-duration) ·
     [Evaluation timing](#evaluation-timing-static-vs-live) ·
@@ -109,10 +110,10 @@ Loosest to tightest binding: `or` → `and` → `not` → comparison
 
 | | |
 |---|---|
-| Numbers | `20`, `0.5`, `-3.2` |
+| Numbers | `20` (`Int`), `0.5`, `-3.2` (`Float`) — see [Int and Float](#int-and-float) |
 | Constants | `true`, `false` (`Bool` — see [Bool](#bool)), `pi`, `e` |
 | Variables | `t`, `_t`, a `for` loop's own variable, any `var` name |
-| Functions | `sin cos abs sqrt floor ceil min max random` — see [Signal-shape builtins](#signal-shape-builtins), [Random distributions](#random-distributions) |
+| Functions | `sin cos abs sqrt floor ceil min max floordiv random` — see [Signal-shape builtins](#signal-shape-builtins), [Random distributions](#random-distributions) |
 | `terop(cond, then, else)` | conditional expression; both branches evaluate eagerly |
 | Duration literals | `10s`, `3m`, `500ms`, `10t` (ticks); normalized to seconds at parse time |
 | `.s` / `.m` / `.ms` | postfix unit view, e.g. `_t.s` |
@@ -130,6 +131,32 @@ name freely — the rule is on overlapping scope, not the identifier.
 
 `.s`/`.m`/`.ms`/`.scale(k)`/`.add(k)`/`.bias(k)` chain in any order and
 count (`_t.s.scale(2).add(1)`); none accept a string operand.
+
+### Int and Float
+
+A number literal's own syntax decides its type — no decimal point is
+`Int` (`5`), a decimal point is `Float` (`5.0`), regardless of value:
+
+```
+count = 5;        # Int
+ratio = 5.0;       # Float
+```
+
+Arithmetic promotes the ordinary way: `Int op Int` stays `Int`, either
+side being `Float` makes the result `Float`. `/` is the one exception —
+always `Float`, even `Int / Int` (`4 / 2` is `2.0`, not `2`). For a
+guaranteed whole-number result instead, use `floordiv(a, b)` — a plain
+function, not a `//` operator, since `//` is already the language's
+comment marker (stripped before any expression is even parsed) and
+can't double as one without silently eating the rest of the line.
+`floor(a)`/`ceil(a)` also return `Int`, not a `Float` that happens to
+be whole. `discrete_uniform`/`poisson`/`binomial` (see [Random
+distributions](#random-distributions)) return `Int` too — each is a
+count, not a measurement.
+
+A duration literal (`10s`, `500ms`) is always `Float`, never `Int`,
+whether or not the written number itself had a decimal point — a
+length of time isn't a whole-number concept the way a count is.
 
 ### Bool
 
@@ -426,11 +453,11 @@ Zero runtime dependencies: pure `random`-module, and for
 
 | | |
 |---|---|
-| `noise(mean, stddev)` | one Gaussian-distributed draw |
-| `uniform(low, high)` | one draw over `[low, high]`; `random()` is its fixed `[0, 1]` case |
-| `discrete_uniform(low, high)` | one draw over the whole numbers in `[low, high]` inclusive; both bounds must be whole numbers |
-| `poisson(lam)` | one draw, rate `lam` (expected event count per interval); `lam > 0` |
-| `binomial(n, p)` | successes out of `n` independent trials at probability `p`; `n` a non-negative whole number, `p` in `[0, 1]` |
+| `noise(mean, stddev)` | one Gaussian-distributed draw — `Float` |
+| `uniform(low, high)` | one draw over `[low, high]`; `random()` is its fixed `[0, 1]` case — `Float` |
+| `discrete_uniform(low, high)` | one draw over the whole numbers in `[low, high]` inclusive; both bounds must be whole numbers — `Int` |
+| `poisson(lam)` | one draw, rate `lam` (expected event count per interval); `lam > 0` — `Int` |
+| `binomial(n, p)` | successes out of `n` independent trials at probability `p`; `n` a non-negative whole number, `p` in `[0, 1]` — `Int` |
 
 **`seed(expr);`** — a statement, not a function: reseeds the shared
 `random` module every one of the builtins above (and `rand_walk!`/

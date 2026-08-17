@@ -320,17 +320,34 @@ def test_live_reads_field_assigned_earlier_in_same_statement_order():
     assert [r.value["data"] for r in results] == [10.0, 11.0]
 
 
-def test_bool_field_publishes_as_a_genuine_bool_not_a_float():
+def test_bool_field_publishes_as_a_genuine_bool_not_a_number():
     src = "is_valid = true;\nlevel = 5;\nsend hz 1 dur 1t;"
     results, _ = run_all(src)
     assert results[0].value["is_valid"] is True
-    assert isinstance(results[0].value["level"], float)
+    level = results[0].value["level"]
+    assert isinstance(level, (int, float)) and not isinstance(level, bool)
 
 
 def test_comparison_result_written_to_a_field_is_a_bool():
     src = "var threshold = 5;\nover = threshold > 3;\nsend hz 1 dur 1t;"
     results, _ = run_all(src)
     assert results[0].value["over"] is True
+
+
+def test_int_field_publishes_as_a_genuine_int_not_a_float():
+    src = "count = 5;\nratio = count / 2;\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    count = results[0].value["count"]
+    ratio = results[0].value["ratio"]
+    assert isinstance(count, int) and not isinstance(count, bool)
+    assert isinstance(ratio, float)
+    assert ratio == 2.5
+
+
+def test_int_var_index_assign_still_works():
+    src = "var arr = [1, 2, 3];\narr[1] = 99;\ndata = arr;\nsend hz 1 dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == [1, 99, 3]
 
 
 def test_if_branches_on_string_comparison():

@@ -6,6 +6,25 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.2.0] — 2026-08-17
 
 ### Added
+- **Breaking:** `Int` and `Float` are now genuinely distinct types - a
+  number literal's own syntax decides which (`5` is `Int`, `5.0` is
+  `Float`), the same way `true` decided `Bool` above. Arithmetic
+  promotes the ordinary way (`Int op Int` stays `Int`; either side
+  `Float` makes the result `Float`), except `/`, which is always
+  `Float` even for `Int / Int` (`4 / 2` is `2.0`, not `2`).
+  `floor(a)`/`ceil(a)` now return a genuine `Int`, not a `Float` that
+  happens to be whole; `discrete_uniform`/`poisson`/`binomial` (added
+  earlier in this same release) now return `Int` too, not a forced
+  `Float` - each is a count, not a measurement. A duration literal
+  (`10s`, `500ms`) stays `Float` always, regardless of whether the
+  written number had a decimal point - a length of time was never an
+  Int concept. New `floordiv(a, b)` builtin for a guaranteed
+  whole-number division result - deliberately a function, not a `//`
+  operator: `//` is already the language's comment marker, stripped
+  before any expression is even parsed, so it can't double as a
+  division operator without silently eating the rest of the line
+  (caught before shipping - the first attempt used `//` as an operator
+  and broke exactly this way).
 - **Breaking:** `Bool` is a genuine third primitive type, not `1.0`/
   `0.0` in disguise. `true`/`false`, and every `==`/`!=`/`<`/`<=`/`>`/
   `>=`/`and`/`or`/`not` result, now produce a real `bool`. `Bool`

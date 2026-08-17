@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Callable, Union
+from typing import TYPE_CHECKING, Callable, Union
+
+if TYPE_CHECKING:
+    # typing_extensions is a transitive dependency of mypy itself, so
+    # this is always available wherever mypy actually runs (CI's `dev`
+    # extra) - guarded under TYPE_CHECKING so it's never an actual
+    # runtime import, keeping the package's real dependency list empty.
+    from typing_extensions import TypeGuard
 
 
-Value = Union[float, bool, str, list, dict]
+Value = Union[int, float, bool, str, list, dict]
 
 
 def is_truthy(value: Value) -> bool:
@@ -21,6 +28,16 @@ def is_truthy(value: Value) -> bool:
 
 def _terop(cond: Value, then: Value, otherwise: Value) -> Value:
     return then if is_truthy(cond) else otherwise
+
+
+def _floordiv(a: float, b: float) -> int:
+    """a // b as a plain function, not an operator: `//` is already the
+    language's comment marker (stripped before any expression is even
+    parsed - see parser.py's _strip_comments), so it can't double as a
+    division operator without silently eating the rest of the line.
+    Always returns a genuine Int, regardless of whether a/b were Int or
+    Float - the whole point is a guaranteed whole-number result."""
+    return int(a // b)
 
 
 def _linear(t: float, a: float, b: float, dur: float) -> float:
@@ -121,26 +138,27 @@ def _uniform(low: float, high: float) -> float:
     return random.uniform(low, high)
 
 
-def _discrete_uniform(low: float, high: float) -> float:
+def _discrete_uniform(low: float, high: float) -> int:
     """A single draw, uniform over the whole numbers in [low, high]
     inclusive (not the continuum in between, unlike uniform) - both
-    bounds must themselves be whole numbers, passed as floats like any
-    other numeric argument in this language. The building block for a
-    fixed-step-size random walk: discrete_uniform(-1, 1) draws a fresh
-    -1, 0, or 1 each call."""
+    bounds must themselves be whole numbers (an Int literal already is
+    one trivially; a whole-number Float also passes). Returns a genuine
+    Int, not a Float that happens to be whole - a count, not a
+    measurement. The building block for a fixed-step-size random walk:
+    discrete_uniform(-1, 1) draws a fresh -1, 0, or 1 each call."""
     if low != int(low) or high != int(high):
         raise ValueError(f"discrete_uniform(): low and high must be whole numbers, got {low}, {high}")
     if low > high:
         raise ValueError(f"discrete_uniform(): low must not be greater than high, got {low}, {high}")
-    return float(random.randint(int(low), int(high)))
+    return random.randint(int(low), int(high))
 
 
-def _poisson(lam: float) -> float:
+def _poisson(lam: float) -> int:
     """A single draw from a Poisson distribution with rate lam (the
     expected count of independent events in one interval) - Knuth's
     algorithm, pure Python, no numpy dependency. lam must be positive;
     large lam (roughly > 700) is slow by this method's own nature, not a
-    guarded limit here."""
+    guarded limit here. Returns a genuine Int - an event count."""
     if lam <= 0:
         raise ValueError(f"poisson(): lam must be greater than 0, got {lam}")
     threshold = math.exp(-lam)
@@ -150,19 +168,19 @@ def _poisson(lam: float) -> float:
         k += 1
         p *= random.random()
         if p <= threshold:
-            return float(k - 1)
+            return k - 1
 
 
-def _binomial(n: float, p: float) -> float:
+def _binomial(n: float, p: float) -> int:
     """A single draw from a binomial distribution: the count of
     successes out of n independent trials, each succeeding with
-    probability p. n must be a non-negative whole number, passed as a
-    float like every other numeric argument in this language."""
+    probability p. n must be a non-negative whole number. Returns a
+    genuine Int - a success count."""
     if n < 0 or n != int(n):
         raise ValueError(f"binomial(): n must be a non-negative whole number, got {n}")
     if not (0.0 <= p <= 1.0):
         raise ValueError(f"binomial(): p must be between 0 and 1, got {p}")
-    return float(sum(1 for _ in range(int(n)) if random.random() < p))
+    return sum(1 for _ in range(int(n)) if random.random() < p)
 
 
 # The fixed set of "time-shaped" builtins - the only ones whose bang-call
@@ -193,6 +211,7 @@ _FUNCTIONS: dict[str, Callable[..., Value]] = {
     "ceil": math.ceil,
     "min": min,
     "max": max,
+    "floordiv": _floordiv,
     "random": random.random,
     "noise": _noise,
     "uniform": _uniform,
@@ -259,10 +278,14 @@ class ExprError(ValueError):
 
 def _type_name(value: Value) -> str:
     # bool is checked first deliberately - Python's bool is an int
-    # subclass (isinstance(True, int) is True), so a later int-vs-float
-    # split needs this ordering to keep bool from being misreported.
+    # subclass (isinstance(True, int) is True), so the int check below
+    # would otherwise also match it and misreport it as "int".
     if isinstance(value, bool):
         return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
     if isinstance(value, str):
         return "string"
     if isinstance(value, list):
@@ -272,12 +295,23 @@ def _type_name(value: Value) -> str:
     return "number"
 
 
+def is_number(value: Value) -> TypeGuard[int | float]:
+    """True for int or float, explicitly false for bool despite Python's
+    bool being an int subclass - the one check nearly every arithmetic/
+    comparison/postfix operator needs, factored out so that exclusion
+    doesn't have to be repeated inline at every call site. A real
+    TypeGuard (not just a bool return), so mypy actually narrows the
+    checked value to int | float afterward, the same way it would for
+    an inline isinstance() check."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _index_into(container: Value, index: Value) -> Value:
     """arr[i] / obj["key"] - a whole-number index into an array, or a
     string key into an object. The one place that actually reads out of
     a compound value; everything upstream just builds them."""
     if isinstance(container, list):
-        if not isinstance(index, float):
+        if not is_number(index):
             raise ExprError(f"array index must be a number, got {_type_name(index)}")
         i = int(index)
         if i != index:
@@ -383,12 +417,7 @@ class _Parser:
                 if op in ("==", "!="):
                     result = _COMPARISONS[op](left, right)
                 else:
-                    numbers = (
-                        isinstance(left, float)
-                        and not isinstance(left, bool)
-                        and isinstance(right, float)
-                        and not isinstance(right, bool)
-                    )
+                    numbers = is_number(left) and is_number(right)
                     strings = isinstance(left, str) and isinstance(right, str)
                     if not (numbers or strings):
                         raise ExprError(f"cannot compare {_type_name(left)} and {_type_name(right)} with '{op}'")
@@ -411,14 +440,14 @@ class _Parser:
                 # each arm's operand types instead of seeing a 4-way union.
                 if isinstance(value, str) and isinstance(right, str):
                     value = value + right
-                elif isinstance(value, float) and isinstance(right, float):
+                elif is_number(value) and is_number(right):
                     value = value + right
                 else:
                     raise ExprError(f"cannot use '+' between {_type_name(value)} and {_type_name(right)}")
             elif c == "-":
                 self.pos += 1
                 right = self._term()
-                if not (isinstance(value, float) and isinstance(right, float)):
+                if not (is_number(value) and is_number(right)):
                     raise ExprError(f"'-' requires two numbers, got {_type_name(value)} and {_type_name(right)}")
                 value = value - right
             else:
@@ -431,13 +460,13 @@ class _Parser:
             if c == "*":
                 self.pos += 1
                 right = self._unary()
-                if not (isinstance(value, float) and isinstance(right, float)):
+                if not (is_number(value) and is_number(right)):
                     raise ExprError(f"'*' requires two numbers, got {_type_name(value)} and {_type_name(right)}")
                 value = value * right
             elif c == "/":
                 self.pos += 1
                 right = self._unary()
-                if not (isinstance(value, float) and isinstance(right, float)):
+                if not (is_number(value) and is_number(right)):
                     raise ExprError(f"'/' requires two numbers, got {_type_name(value)} and {_type_name(right)}")
                 if right == 0:
                     raise ExprError("division by zero")
@@ -445,7 +474,7 @@ class _Parser:
             elif c == "%":
                 self.pos += 1
                 right = self._unary()
-                if not (isinstance(value, float) and isinstance(right, float)):
+                if not (is_number(value) and is_number(right)):
                     raise ExprError(f"'%' requires two numbers, got {_type_name(value)} and {_type_name(right)}")
                 value = value % right
             else:
@@ -456,7 +485,7 @@ class _Parser:
         if c == "-":
             self.pos += 1
             value = self._unary()
-            if not isinstance(value, float):
+            if not is_number(value):
                 raise ExprError(f"unary '-' requires a number, got {_type_name(value)}")
             return -value
         if c == "+":
@@ -520,13 +549,13 @@ class _Parser:
             if word == "shift":
                 if not args:
                     raise ExprError(f"'.shift(...)' requires '{name}' to take at least one argument")
-                if not isinstance(args[0], float):
+                if not is_number(args[0]):
                     raise ExprError(
                         f"'.shift(...)' is not supported - '{name}''s first argument is {_type_name(args[0])}"
                     )
                 self.pos = name_end + 1
                 offset = self._or()
-                if not isinstance(offset, float):
+                if not is_number(offset):
                     raise ExprError(f"'.shift(...)' requires a number argument, got {_type_name(offset)}")
                 if self._peek() != ")":
                     raise ExprError("expected ')'")
@@ -551,13 +580,13 @@ class _Parser:
         order those operators were originally written."""
         for kind, payload in pending:
             if kind == "unit":
-                if not isinstance(value, float):
+                if not is_number(value):
                     raise ExprError(f"'.{payload}' requires a number, got {_type_name(value)}")
                 value = value / _TIME_UNITS[payload]
             else:
-                if not isinstance(value, float):
+                if not is_number(value):
                     raise ExprError(f"'.{kind}(...)' requires a number, got {_type_name(value)}")
-                if not isinstance(payload, float):
+                if not is_number(payload):
                     raise ExprError(f"'.{kind}(...)' requires a number argument, got {_type_name(payload)}")
                 value = _VALUE_METHODS[kind](value, payload)
         return value
@@ -607,7 +636,7 @@ class _Parser:
                 continue
             unit = self._match_time_unit(after_dot)
             if unit is not None:
-                if not isinstance(value, float):
+                if not is_number(value):
                     raise ExprError(f"'.{unit}' requires a number, got {_type_name(value)}")
                 self.pos = after_dot + len(unit)
                 value = value / _TIME_UNITS[unit]
@@ -617,11 +646,11 @@ class _Parser:
                 name_end += 1
             method_name = self.text[after_dot:name_end]
             if method_name in _VALUE_METHODS and name_end < len(self.text) and self.text[name_end] == "(":
-                if not isinstance(value, float):
+                if not is_number(value):
                     raise ExprError(f"'.{method_name}(...)' requires a number, got {_type_name(value)}")
                 self.pos = name_end + 1
                 arg = self._or()
-                if not isinstance(arg, float):
+                if not is_number(arg):
                     raise ExprError(f"'.{method_name}(...)' requires a number argument, got {_type_name(arg)}")
                 if self._peek() != ")":
                     raise ExprError("expected ')'")
@@ -719,15 +748,25 @@ class _Parser:
             return self._postfix(value)
         if c.isdigit() or c == ".":
             start = self.pos
+            has_dot = False
             while self.pos < len(self.text) and (self.text[self.pos].isdigit() or self.text[self.pos] == "."):
+                if self.text[self.pos] == ".":
+                    has_dot = True
                 self.pos += 1
-            value = float(self.text[start : self.pos])
-            # a duration literal (10s, 3m, 500ms) - no dot, glued straight
-            # onto the number - normalizes to seconds immediately.
+            text = self.text[start : self.pos]
             unit = self._match_time_unit(self.pos)
             if unit is not None:
+                # a duration literal (10s, 3m, 500ms) - no dot needed
+                # between the number and unit, glued straight onto it,
+                # normalizes to seconds immediately. Always a Float - a
+                # length of time is never an Int, whether or not the
+                # written number itself had a decimal point.
                 self.pos += len(unit)
-                value *= _TIME_UNITS[unit]
+                value = float(text) * _TIME_UNITS[unit]
+            elif has_dot:
+                value = float(text)
+            else:
+                value = int(text)
             return self._postfix(value)
         if c.isalpha() or c == "_":
             start = self.pos
@@ -754,15 +793,10 @@ class _Parser:
                     raise ExprError(f"function '{name}' got an invalid argument type: {exc}") from None
                 except (ValueError, ZeroDivisionError) as exc:
                     raise ExprError(f"function '{name}' failed: {exc}") from None
-                # floor()/ceil() return a plain int, not float - normalize
-                # that; str/list/dict/bool (terop can produce any Value,
-                # including one built from a comparison) pass through
-                # untouched. bool must be excluded explicitly here even
-                # though it isn't in that tuple - float(True) would
-                # silently turn it back into 1.0, undoing terop's own
-                # result the moment it flows back through a call.
-                if not isinstance(result, (str, list, dict, bool)):
-                    result = float(result)
+                # No normalization needed here anymore - every builtin's
+                # own Python return type (int for floor()/ceil(), float
+                # for the rest, or whatever terop's chosen branch already
+                # was) is already a valid Value on its own.
                 result = self._apply_pending_postfix(result, pending)
                 # _consume_call_postfix_chain only understands .shift/
                 # .scale/.add/.bias/.s/.m/.ms - indexing (arr[i], obj.key)
@@ -771,17 +805,11 @@ class _Parser:
                 # still needs an ordinary _postfix() pass.
                 return self._postfix(result)
             if name in self.variables:
-                value = self.variables[name]
-                # callers (e.g. tests, or vm.py's own scope dict) may
-                # hand in a plain int for a numeric variable - coerce
-                # that to float, same as every literal in this language
-                # already is, without touching str/list/dict/bool. bool
-                # must be excluded explicitly: Python's bool is an int
-                # subclass, so this check would otherwise also catch a
-                # genuine bool value and flatten it back to 1.0/0.0.
-                if isinstance(value, int) and not isinstance(value, bool):
-                    value = float(value)
-                return self._postfix(value)
+                # a caller-supplied int (e.g. a test's variables dict, or
+                # vm.py's own scope) now passes through as a genuine Int
+                # value - no coercion to float needed, Int is a real
+                # first-class type on its own.
+                return self._postfix(self.variables[name])
             if name in _CONSTANTS:
                 return self._postfix(_CONSTANTS[name])
             raise ExprError(f"unknown identifier '{name}'")
