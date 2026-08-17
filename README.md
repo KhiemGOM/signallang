@@ -37,7 +37,8 @@ run.step()   # StepResult(value={'temperature': 20.5}, hz=2.0)
     [Evaluation timing](#evaluation-timing-static-vs-live) ·
     [Timers](#timers) · [Signal-shape builtins](#signal-shape-builtins) ·
     [Random distributions](#random-distributions) ·
-    [`.shift(offset)`](#shiftoffset)
+    [`.shift(offset)`](#shiftoffset) ·
+    [`func` (macros)](#func-macros)
 - [Full worked example](#full-worked-example)
 - [Safety model](#safety-model)
 - [Prior art](#prior-art)
@@ -591,6 +592,54 @@ elapsed time) passes through unmodified — `%`-based shapes
 after anything but a function call (a bare variable, a parenthesized
 expression) is a syntax error.
 
+### `func` (macros)
+
+```
+func ramp(field, from, to, duration) {
+    field = live { return linear(_t, from, to, duration); };
+}
+
+ramp(linear.x, 0, 1, 3s);
+send hz 10 dur 3s;
+ramp(linear.x, 1, 0, 3s);
+send hz 10 dur 3s;
+```
+
+A macro, not a function — declared with `func name(params) { <statements> }`
+(top level only), a call (`name(args);`, valid anywhere a statement is,
+except inside a `live` block) expands inline into the body's own
+statements at parse time, parameters substituted with the caller's
+arguments. No return value, no call stack, nothing added to the VM at
+all — by the time a call site reaches the compiler it's indistinguishable
+from having been hand-written at that spot.
+
+Arguments must be **atomic** — a number, identifier (including a dotted
+field path, `linear.x`), string, or duration literal, never an arbitrary
+expression (`ramp(linear.x, 0, 1 + 1, 3s)` is a compile error, not a
+computed value). Text substitution has no context-free way to preserve
+operator precedence — wrapping every substitution in parentheses would
+fix an arithmetic context but break a field-path one (`(linear).x` isn't
+valid syntax) — so rather than solving that, arguments that would need
+it are rejected outright.
+
+A macro's own `var` locals are hygienically renamed per call site, so
+calling the same macro twice never collides:
+
+```
+func bump(field, amount) {
+    var step = amount;
+    field = step;
+}
+bump(a, 5);   # a's own local, independent of...
+bump(b, 10);  # ...b's own local, even though both say "step" in the source
+```
+
+Direct or indirect self-reference (`a` calling `b` calling `a`) is a
+compile-time error. A chain of macros calling each other several times
+each with no recursion anywhere can still multiply into an enormous
+expansion, so total expanded size is capped — the same blunt-backstop
+spirit as `MAX_HZ` capping publish rate, not a sophisticated analysis.
+
 ## Full worked example
 
 ```
@@ -616,9 +665,13 @@ test rig.
 
 ## Safety model
 
-- No `eval`, no `exec`, no attribute access, no imports, no
-  user-defined functions. Every callable is drawn from a fixed,
-  language-defined set.
+- No `eval`, no `exec`, no attribute access, no imports. Every callable
+  usable inside an *expression* is drawn from a fixed, language-defined
+  set — `func` macros don't change this: a macro call never appears in
+  expression position, it expands at parse time into the same
+  restricted statement grammar everything else goes through, so there's
+  no new way to reach outside the sandbox, only a way to avoid
+  repeating a statement pattern verbatim.
 - Only `t`, `_t`, a `for` loop's own variable, `var` names, and fields
   of the message being built are in scope. Nothing outside the value
   currently being computed is reachable.

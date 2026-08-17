@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from .ast_nodes import (
     ArrayLit,
     Assign,
+    Block,
     Default,
     ExprSpan,
     For,
@@ -181,6 +182,8 @@ class Compiler:
             self._emit(SeedInstr(s.value))
         elif isinstance(s, Wait):
             self._compile_wait(s)
+        elif isinstance(s, Block):
+            self._compile_block(s.body)
         else:
             raise ScriptError(f"internal: unknown statement {s!r}")
 

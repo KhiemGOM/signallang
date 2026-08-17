@@ -704,3 +704,70 @@ def test_msg_prefixed_field_assignment_still_works():
     # message-field write, exactly as before.
     results, _ = run_all("msg.angular = 5;\nsend hz 1 dur 1t;")
     assert results[0].value == {"angular": 5.0}
+
+
+# -- func macros ----------------------------------------------------------
+
+def test_macro_ramp_pattern_end_to_end():
+    src = """
+    func ramp(field, from, to, duration) {
+        field = live { return linear(_t, from, to, duration); };
+    }
+    ramp(linear.x, 0, 1, 3s);
+    send hz 10 dur 3s;
+    ramp(linear.x, 1, 0, 3s);
+    send hz 10 dur 3s;
+    """
+    results, halted = run_all(src)
+    assert halted
+    assert len(results) == 60
+    assert results[0].value == {"linear": {"x": 0.0}}
+    assert results[29].value["linear"]["x"] == pytest.approx(1.0, abs=0.05)
+    assert results[30].value["linear"]["x"] == pytest.approx(1.0, abs=0.05)
+    assert results[-1].value["linear"]["x"] == pytest.approx(0.0, abs=0.05)
+
+
+def test_macro_called_twice_does_not_collide_hygienically():
+    src = """
+    func bump(field, amount) {
+        var step = amount;
+        field = step;
+    }
+    bump(a, 5);
+    bump(b, 10);
+    send hz 1 dur 1t;
+    """
+    results, _ = run_all(src)
+    assert results[0].value == {"a": 5, "b": 10}
+
+
+def test_macro_call_inside_repeat_runs_once_per_lap():
+    src = """
+    func flash(field) {
+        field = 1;
+        send hz 10 dur 1t;
+        field = 0;
+        send hz 10 dur 1t;
+    }
+    repeat 2 {
+        flash(data);
+    }
+    """
+    results, halted = run_all(src)
+    assert halted
+    assert [r.value["data"] for r in results] == [1, 0, 1, 0]
+
+
+def test_macro_calling_another_macro_works_end_to_end():
+    src = """
+    func inner(field, value) {
+        field = value;
+    }
+    func outer(field, value) {
+        inner(field, value);
+    }
+    outer(data, 42);
+    send hz 1 dur 1t;
+    """
+    results, _ = run_all(src)
+    assert results[0].value == {"data": 42}

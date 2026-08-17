@@ -7,10 +7,13 @@ own precedent.
 
 from __future__ import annotations
 
+import re
+
 from . import span
 from .ast_nodes import (
     ArrayLit,
     Assign,
+    Block,
     Default,
     ExprSpan,
     For,
@@ -57,6 +60,7 @@ _KEYWORDS = frozenset(
         "brown_motion",
         "seed",
         "wait",
+        "func",
     }
 )
 # `name!(args)` sugar for the two accumulator patterns that need a
@@ -70,6 +74,77 @@ _ACCUMULATOR_FUNCTIONS = {
     "rand_walk": "discrete_uniform({args})",  # fixed-step-size, discrete lattice
     "brown_motion": "noise({args})",  # Gaussian increment - simulated Brownian motion
 }
+
+# `func name(params) { body }` - a macro, not a real callable: expanded
+# inline, textually, at each call site, at PARSE time. Nothing downstream
+# (compiler.py, vm.py) ever knows a macro was involved - by the time a
+# call site is compiled it's already an ordinary Block of ordinary
+# statements. Arguments must be atomic (a number, identifier, string, or
+# duration literal) - never an arbitrary expression - because naive text
+# substitution has no context-free way to preserve operator precedence
+# (wrapping every substitution in parens would fix arithmetic contexts
+# but break field-path ones: `(linear).x` isn't valid syntax) or to know
+# whether a `,`-argument spanning multiple tokens was even meant as one
+# value. Restricting to atoms sidesteps the whole class of bug rather
+# than trying to solve it.
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_ATOMIC_ARG_RE = re.compile(
+    r"^-?\d+(\.\d+)?(ms|s|m)?$"  # number or duration literal
+    r"|^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$"  # identifier, or a dotted field path (linear.x)
+    r'|^"[^"]*"$'  # string literal
+)
+_VAR_DECL_IN_BODY_RE = re.compile(r"\bvar\s+([A-Za-z_][A-Za-z0-9_]*)")
+# A blunt backstop against exponential blowup from nested macro calls -
+# no single macro is unreasonably huge, but a chain of macros each
+# calling the next several times, with no recursion anywhere in sight,
+# can still multiply into an enormous expansion. Direct/indirect
+# self-reference is banned outright (see Parser._expanding below); this
+# catches everything that ban doesn't. Same spirit as MAX_HZ capping
+# publish rate - a simple ceiling, not a sophisticated analysis.
+_MAX_EXPANDED_CHARS = 200_000
+
+
+class _MacroDef:
+    __slots__ = ("name", "params", "body_text")
+
+    def __init__(self, name: str, params: list, body_text: str):
+        self.name = name
+        self.params = params
+        self.body_text = body_text
+
+
+def _is_atomic_arg(text: str) -> bool:
+    return bool(_ATOMIC_ARG_RE.match(text.strip()))
+
+
+def _substitute(text: str, mapping: dict) -> str:
+    """Word-boundary-safe find/replace over every identifier-shaped
+    token in `text`, skipping the insides of string literals untouched
+    (so a param named `s` doesn't get substituted inside `"s"`). Used
+    both for parameter substitution and for hygienically renaming a
+    macro's own locals - same mechanism, just a different mapping."""
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 1
+            j = min(j + 1, n)
+            out.append(text[i:j])
+            i = j
+            continue
+        m = _IDENT_RE.match(text, i)
+        if m:
+            word = m.group(0)
+            out.append(mapping.get(word, word))
+            i = m.end()
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 
 def _strip_comments(text: str) -> str:
@@ -115,6 +190,10 @@ class Parser:
         # so vm.py can hand it to expr.py for checking Duration-required
         # call arguments.
         self.duration_vars: set = set()
+        self.macros: dict = {}  # name -> _MacroDef, declared with func
+        self._expanding: list = []  # macro names currently being expanded - cycle guard
+        self._macro_call_counter = 0  # for unique per-call-site local var renames
+        self._expanded_chars = 0  # running total, checked against _MAX_EXPANDED_CHARS
 
     # -- low-level helpers --------------------------------------------------
 
@@ -238,6 +317,11 @@ class Parser:
             return self._parse_seed()
         if self._looking_at_word("wait"):
             return self._parse_wait()
+        if self._looking_at_word("func"):
+            return self._parse_func_decl()
+        macro_call = self._try_parse_macro_call()
+        if macro_call is not None:
+            return macro_call
         return self._parse_path_stmt()
 
     def _declare_var(self, name: str) -> None:
@@ -496,6 +580,132 @@ class Parser:
         mult = {"s": 1.0, "m": 60.0, "ms": 0.001, None: 1.0}[unit]
         self._expect_char(";")
         return Wait(duration=num * mult)
+
+    def _parse_func_decl(self):
+        """`func name(params) { body }` - declares a macro; produces no
+        runtime effect of its own (an empty Block), it only records the
+        body's raw text for later expansion at each call site. The body
+        is NOT parsed/validated here - its parameter names aren't real
+        identifiers until a call site substitutes them, so there's
+        nothing meaningful to eagerly check yet (unlike if/else, whose
+        branches mean something on their own regardless of which runs).
+        A macro that's declared but never called is simply never
+        expanded, and any error inside it never surfaces."""
+        self._advance_word("func")
+        self._skip_ws()
+        start = self.pos
+        name = self._parse_ident()
+        if name in self.macros:
+            raise ScriptError(f"macro '{name}' is already declared", start)
+        self._expect_char("(")
+        params: list = []
+        self._skip_ws()
+        if self._peek_char() != ")":
+            params.append(self._parse_ident())
+            while self._peek_char() == ",":
+                self.pos += 1
+                params.append(self._parse_ident())
+        self._expect_char(")")
+        if len(set(params)) != len(params):
+            raise ScriptError(f"macro '{name}' has a duplicate parameter name", start)
+        self._skip_ws()
+        self._expect_char("{")
+        body_start = self.pos
+        body_end = span.scan_span(self.text, self.pos, "}")
+        body_text = self.text[body_start:body_end]
+        self.pos = body_end
+        self._expect_char("}")
+        collision = set(_VAR_DECL_IN_BODY_RE.findall(body_text)) & set(params)
+        if collision:
+            raise ScriptError(
+                f"macro '{name}': local var '{next(iter(collision))}' has the same name as a parameter",
+                start,
+            )
+        self.macros[name] = _MacroDef(name=name, params=params, body_text=body_text)
+        return Block(body=[])
+
+    def _try_parse_macro_call(self):
+        """`name(args);`, where `name` is a declared macro - recognized
+        only when `name` is ALREADY known (backtracks fully otherwise,
+        so an ordinary message-field path or var-index assignment whose
+        name just happens to be followed by `(` - which can't otherwise
+        happen in this grammar - falls through to _parse_path_stmt as
+        always). Expands to a Block of the macro's own body, fully
+        parameter-substituted and hygienically renamed, then re-parsed
+        as ordinary statements sharing this same Parser's scope-tracking
+        state - by the time the result reaches compiler.py, nothing
+        about it looks any different from having been hand-written."""
+        save = self.pos
+        self._skip_ws()
+        start = self.pos
+        if self.pos >= len(self.text) or not (self.text[self.pos].isalpha() or self.text[self.pos] == "_"):
+            self.pos = save
+            return None
+        while self.pos < len(self.text) and (self.text[self.pos].isalnum() or self.text[self.pos] == "_"):
+            self.pos += 1
+        name = self.text[start : self.pos]
+        if name not in self.macros or self._peek_char() != "(":
+            self.pos = save
+            return None
+        macro = self.macros[name]
+        self.pos += 1  # '('
+        args: list = []
+        self._skip_ws()
+        if self._peek_char() != ")":
+            args.append(self._scan_macro_arg(name))
+            while self._peek_char() == ",":
+                self.pos += 1
+                args.append(self._scan_macro_arg(name))
+        self._expect_char(")")
+        self._expect_char(";")
+        if len(args) != len(macro.params):
+            raise ScriptError(
+                f"macro '{name}' takes {len(macro.params)} argument(s), got {len(args)}", start
+            )
+        return self._expand_macro_call(macro, args, start)
+
+    def _scan_macro_arg(self, macro_name: str):
+        self._skip_ws()
+        arg_start = self.pos
+        arg_end = span.scan_span(self.text, arg_start, ",)")
+        text = self.text[arg_start:arg_end].strip()
+        self.pos = arg_end
+        if not text or not _is_atomic_arg(text):
+            raise ScriptError(
+                f"macro '{macro_name}' arguments must be atomic (a number, identifier, string, "
+                f"or duration literal), not an expression - got {text!r}",
+                arg_start,
+            )
+        return text
+
+    def _expand_macro_call(self, macro: _MacroDef, args: list, call_pos: int) -> Block:
+        if macro.name in self._expanding:
+            chain = " -> ".join(self._expanding + [macro.name])
+            raise ScriptError(f"macro '{macro.name}' calls itself, directly or indirectly: {chain}", call_pos)
+        self._macro_call_counter += 1
+        call_id = self._macro_call_counter
+        mapping = dict(zip(macro.params, args))
+        for local in _VAR_DECL_IN_BODY_RE.findall(macro.body_text):
+            if local not in mapping:
+                mapping[local] = f"__{macro.name}_{call_id}_{local}"
+        substituted = _substitute(macro.body_text, mapping)
+        self._expanded_chars += len(substituted)
+        if self._expanded_chars > _MAX_EXPANDED_CHARS:
+            raise ScriptError(
+                "macro expansion exceeded the maximum allowed size - check for runaway nesting "
+                "(a chain of macros each calling the next several times multiplies fast, even with "
+                "no recursion anywhere)",
+                call_pos,
+            )
+        saved_text, saved_pos = self.text, self.pos
+        self.text, self.pos = substituted, 0
+        self._expanding.append(macro.name)
+        try:
+            body = self._parse_block_until("", self._parse_stmt)
+        finally:
+            self._expanding.pop()
+            self.text, self.pos = saved_text, saved_pos
+        return Block(body=body)
 
     def _word_at(self, pos: int, word: str) -> bool:
         end = pos + len(word)

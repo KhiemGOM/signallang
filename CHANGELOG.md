@@ -6,6 +6,36 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.2.0] — 2026-08-17
 
 ### Added
+- `func name(params) { statements }` - a macro, not a real function:
+  declared at the top level, a call (`name(args);`, valid anywhere a
+  statement is except inside a `live` block) expands inline into the
+  body's own statements at parse time, no return value, nothing added
+  to the VM. Entirely a parser.py-level feature - by the time a call
+  site reaches compiler.py it's indistinguishable from having been
+  hand-written there, since it's compiled to an ordinary `Block` of
+  ordinary statements. Fits the language's own flat-instruction-tape
+  architecture (no call stack anywhere in the VM) far better than a
+  real runtime function call would have, which would have needed one.
+  Arguments must be atomic (a number, identifier, string, or duration
+  literal - including a dotted field path, `linear.x`) rather than an
+  arbitrary expression, since naive text substitution has no
+  context-free way to preserve operator precedence: wrapping every
+  substitution in parens would fix an arithmetic context but break a
+  field-path one (`(linear).x` isn't valid syntax), so arguments that
+  would need it are rejected outright rather than half-solved. A
+  macro's own `var` locals are hygienically renamed per call site
+  (`__ramp_3_progress`), so calling the same macro twice never collides
+  in the shared top-level scope - caught and fixed before it could be a
+  real bug, not after: called the exact scenario out during design as
+  the thing that would make the feature "nearly useless" without it.
+  Direct/indirect self-reference is a compile-time error; a chain of
+  macros each calling the next several times, with no recursion
+  anywhere, can still multiply exponentially, so total expanded size is
+  capped too - same blunt-backstop spirit as `MAX_HZ`. The Safety
+  model's "no user-defined functions" claim is revised, not broken - a
+  macro call never exists in expression position and expands into the
+  identical restricted statement grammar everything else goes through,
+  so there's no new way to reach outside the sandbox.
 - Optional schema type-checking: `SchemaProvider` gains a `type_at(path)`
   method, checked on every field write when present. Genuinely optional -
   `vm.py` checks for the method's existence via `getattr` before ever

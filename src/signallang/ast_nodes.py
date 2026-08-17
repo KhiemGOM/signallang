@@ -112,6 +112,19 @@ class StaticReassign:
 
 
 @dataclass
+class Block:
+    """A sequence of statements standing in for a single one - what a
+    `func` declaration (an empty Block: it has no runtime effect of its
+    own) and a macro call (a Block of that macro's own body, expanded
+    and parameter-substituted at parse time) both compile to. Nothing
+    downstream needs to know a macro was ever involved: compiler.py
+    just compiles each statement inside in order, exactly as if they'd
+    been written out by hand at that spot."""
+
+    body: list
+
+
+@dataclass
 class VarIndexAssign:
     """`name(.ident | [expr])+ = expr;`, where `name` is an existing var -
     mutates the var's own array/object value in place, rather than

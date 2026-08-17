@@ -544,3 +544,117 @@ def test_both_if_branches_parsed_eagerly_even_if_one_never_runs():
     # whether that branch would ever execute at runtime.
     with pytest.raises(ScriptError):
         parse("if false {\n data = 1;\n} else {\n data = \n}")
+
+
+# -- func macros --------------------------------------------------------
+
+def test_func_decl_produces_no_statements_of_its_own():
+    from signallang.ast_nodes import Block
+
+    prog = parse("func f(x) { data = x; }\ndata = 1;")
+    assert prog.body[0] == Block(body=[])
+    assert prog.body[1] == Assign(path=["data"], value=ExprSpan("1"))
+
+
+def test_macro_call_expands_into_a_block_of_substituted_statements():
+    from signallang.ast_nodes import Block
+
+    prog = parse("func f(x) { data = x; }\nf(5);")
+    call = prog.body[1]
+    assert isinstance(call, Block)
+    assert call.body == [Assign(path=["data"], value=ExprSpan("5"))]
+
+
+def test_macro_call_substitutes_a_dotted_field_path_argument():
+    from signallang.ast_nodes import Block
+
+    prog = parse("func f(field, val) { field = val; }\nf(linear.x, 5);")
+    call = prog.body[1]
+    assert isinstance(call, Block)
+    assert call.body == [Assign(path=["linear", "x"], value=ExprSpan("5"))]
+
+
+def test_duplicate_macro_name_is_a_compile_error():
+    with pytest.raises(ScriptError):
+        parse("func f(x) { data = x; }\nfunc f(y) { data = y; }")
+
+
+def test_duplicate_parameter_name_is_a_compile_error():
+    with pytest.raises(ScriptError):
+        parse("func f(x, x) { data = x; }")
+
+
+def test_macro_param_name_cannot_be_a_reserved_name():
+    with pytest.raises(ScriptError):
+        parse("func f(sin) { data = sin; }")
+
+
+def test_macro_local_var_colliding_with_a_param_name_is_rejected():
+    with pytest.raises(ScriptError):
+        parse("func f(x) { var x = 1; data = x; }")
+
+
+def test_macro_call_wrong_argument_count_is_a_compile_error():
+    with pytest.raises(ScriptError):
+        parse("func f(x, y) { data = x; }\nf(1);")
+    with pytest.raises(ScriptError):
+        parse("func f(x) { data = x; }\nf(1, 2);")
+
+
+@pytest.mark.parametrize(
+    "arg",
+    ["1 + 1", "sin(t)", "(1)", "1, 2"],
+)
+def test_macro_call_non_atomic_argument_is_a_compile_error(arg):
+    with pytest.raises(ScriptError):
+        parse(f"func f(x) {{ data = x; }}\nf({arg});")
+
+
+def test_macro_direct_recursion_is_a_compile_error():
+    with pytest.raises(ScriptError):
+        parse("func loop(x) { loop(x); }\nloop(1);")
+
+
+def test_macro_indirect_recursion_is_a_compile_error():
+    with pytest.raises(ScriptError):
+        parse("func a(x) { b(x); }\nfunc b(x) { a(x); }\na(1);")
+
+
+def test_macro_call_inside_repeat_and_if():
+    from signallang.ast_nodes import Block
+
+    prog = parse("func f(x) { data = x; }\nrepeat 2 {\n if t > 0 {\n f(5);\n }\n}")
+    repeat_node = prog.body[1]
+    if_node = repeat_node.body[0]
+    assert isinstance(if_node.then_body[0], Block)
+
+
+def test_macro_call_is_not_recognized_inside_a_live_block():
+    with pytest.raises(ScriptError):
+        parse("func f(x) { data = x; }\ny = live {\n f(5);\n return 1;\n};")
+
+
+def test_macro_locals_are_hygienically_renamed_per_call_site():
+    from signallang.ast_nodes import Block
+
+    prog = parse("func f(x) { var step = x; data = step; }\nf(1);\nf(2);")
+    first_call, second_call = prog.body[1], prog.body[2]
+    assert isinstance(first_call, Block) and isinstance(second_call, Block)
+    first_var_decl = first_call.body[0]
+    second_var_decl = second_call.body[0]
+    assert first_var_decl.name != second_var_decl.name
+    # each call's own reassignment/read still refers to ITS OWN renamed local
+    assert first_call.body[1].value.text == first_var_decl.name
+    assert second_call.body[1].value.text == second_var_decl.name
+
+
+def test_macro_calling_another_macro_expands_transitively():
+    from signallang.ast_nodes import Block
+
+    prog = parse("func inner(x) { data = x; }\nfunc outer(y) { inner(y); }\nouter(5);")
+    call = prog.body[2]
+    assert isinstance(call, Block)
+    # outer's own Block wraps inner's expansion, which wraps the real statement
+    inner_block = call.body[0]
+    assert isinstance(inner_block, Block)
+    assert inner_block.body == [Assign(path=["data"], value=ExprSpan("5"))]
