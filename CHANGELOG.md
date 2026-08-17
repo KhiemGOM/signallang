@@ -5,6 +5,21 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.2.0] — 2026-08-17
 
+### Fixed
+- `.reset()` on anything other than a genuine `timer()`/
+  `latching_timer()` var - a plain `var`, `t` (the global counter,
+  never tracked in `self.timers` at all), or an undeclared name -
+  compiled cleanly and then crashed at the first `step()` with a raw,
+  unhandled `KeyError`, not a `ScriptError`. Confirmed directly for all
+  three cases before fixing. The parser now tracks which declared names
+  actually came from `timer()`/`latching_timer()` (mirroring how
+  `known_vars`/`static_names` already track their own declarations,
+  including the same live-block scope isolation) and validates
+  `.reset()` against that at compile time, with a reason specific to
+  each case instead of a generic error. Every timer read still
+  resolves straight to a `Float`, unchanged - the type only exists at
+  the declaration site, never as a value that flows anywhere else.
+
 ### Added
 - **Breaking:** `Int` and `Float` are now genuinely distinct types - a
   number literal's own syntax decides which (`5` is `Int`, `5.0` is

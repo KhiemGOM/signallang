@@ -442,6 +442,33 @@ def test_timer_reset_statement():
     assert prog.body[1] == TimerReset(name="a")
 
 
+def test_latching_timer_reset_statement():
+    prog = parse("var a = latching_timer();\na.reset();")
+    from signallang.ast_nodes import TimerReset
+
+    assert prog.body[1] == TimerReset(name="a")
+
+
+def test_reset_on_a_plain_var_is_a_compile_error():
+    # regression test: this used to compile cleanly and crash at runtime
+    # with a raw KeyError, since nothing checked whether the name was
+    # actually declared with timer()/latching_timer().
+    with pytest.raises(ScriptError):
+        parse("var mt = 5;\nmt.reset();")
+
+
+def test_reset_on_t_is_a_compile_error():
+    # 't' was also reachable as a .reset() target before this fix,
+    # crashing the same way - it isn't tracked in self.timers at all.
+    with pytest.raises(ScriptError):
+        parse("t.reset();")
+
+
+def test_reset_on_an_undeclared_name_is_a_compile_error():
+    with pytest.raises(ScriptError):
+        parse("unknown.reset();")
+
+
 def test_seed_statement():
     from signallang.ast_nodes import Seed
 

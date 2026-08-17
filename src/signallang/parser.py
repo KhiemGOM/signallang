@@ -107,6 +107,7 @@ class Parser:
         self.pos = 0
         self.known_vars: set = set()
         self.static_names: set = set()  # live-block statics currently in scope
+        self.timer_names: set = set()  # known_vars declared via timer()/latching_timer()
 
     # -- low-level helpers --------------------------------------------------
 
@@ -260,6 +261,7 @@ class Parser:
             self._expect_char(")")
             self._expect_char(";")
             self._declare_var(name)
+            self.timer_names.add(name)
             return TimerDecl(name=name, kind="eager")
         if self._looking_at_word("latching_timer"):
             self._advance_word("latching_timer")
@@ -267,6 +269,7 @@ class Parser:
             self._expect_char(")")
             self._expect_char(";")
             self._declare_var(name)
+            self.timer_names.add(name)
             return TimerDecl(name=name, kind="latching")
         value = self._scan_expr_span(";")
         self._expect_char(";")
@@ -299,6 +302,17 @@ class Parser:
                     self._expect_char(";")
                     if len(path) != 1 or accessors:
                         raise ScriptError("'.reset()' only applies to a single timer name", self.pos)
+                    if path[0] not in self.timer_names:
+                        if path[0] == "t":
+                            reason = "'t' is the global elapsed-time counter, always counting - it can't be reset"
+                        elif path[0] in self.known_vars:
+                            reason = f"'{path[0]}' is a var, but not one created with timer()/latching_timer()"
+                        else:
+                            reason = f"'{path[0]}' was never declared"
+                        raise ScriptError(
+                            f"'.reset()' requires a var created with timer()/latching_timer() - {reason}",
+                            self.pos,
+                        )
                     return TimerReset(name=path[0])
                 if is_var:
                     accessors.append(("dot", ident))
@@ -588,8 +602,10 @@ class Parser:
             self._expect_char("{")
             saved_known = self.known_vars
             saved_static = self.static_names
+            saved_timers = self.timer_names
             self.known_vars = set()  # live blocks can only write their own locals
             self.static_names = set()
+            self.timer_names = set()
             body = self._parse_block_until_return()
             self._advance_word("return")
             ret = self._scan_expr_span(";")
@@ -597,6 +613,7 @@ class Parser:
             self._expect_char("}")
             self.known_vars = saved_known
             self.static_names = saved_static
+            self.timer_names = saved_timers
             return LiveBlock(body=body, return_expr=ret)
         # shorthand: `live <expr>;` desugars to `live { return <expr>; };` -
         # same LiveBlock AST (empty body, no locals), for the common case

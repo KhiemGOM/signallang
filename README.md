@@ -423,6 +423,15 @@ immediately, or un-latches a latching one (next read re-latches). `_t`
 inside `live` is exactly a private `latching_timer()` — see
 [Evaluation timing](#evaluation-timing-static-vs-live).
 
+Every read of a timer resolves straight to a `Float` (elapsed seconds)
+— there's no separate "Timer value" that can be stored in another
+`var`, held in an array, or passed to a function; the type only exists
+at the declaration site. `.reset()` is checked against exactly that:
+it's a compile-time error unless the name was declared with
+`timer()`/`latching_timer()` — a plain `var`, `t` (the global counter,
+which can't be reset), or an undeclared name are all rejected with a
+clear reason, not left to fail at runtime.
+
 ### Signal-shape builtins
 
 Pure functions of an explicit elapsed-time argument, same evaluation
