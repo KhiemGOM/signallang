@@ -348,7 +348,7 @@ class ExprError(ValueError):
     pass
 
 
-def _type_name(value: Value) -> str:
+def type_name(value: Value) -> str:
     # bool is checked first deliberately - Python's bool is an int
     # subclass (isinstance(True, int) is True), so the int check below
     # would otherwise also match it and misreport it as "int".
@@ -368,7 +368,7 @@ def _type_name(value: Value) -> str:
 
 
 def _value_category(value: Value) -> str:
-    """Like _type_name, but Int and Float collapse into one "number"
+    """Like type_name, but Int and Float collapse into one "number"
     category - used only for terop()'s then/else type-agreement check,
     where the two are meant to be as interchangeable as they already
     are in arithmetic (terop(cond, 5, 5.0) is fine; terop(cond, 5,
@@ -404,7 +404,7 @@ def _index_into(container: Value, index: Value) -> Value:
     a compound value; everything upstream just builds them."""
     if isinstance(container, list):
         if not is_number(index):
-            raise ExprError(f"array index must be a number, got {_type_name(index)}")
+            raise ExprError(f"array index must be a number, got {type_name(index)}")
         i = int(index)
         if i != index:
             raise ExprError(f"array index must be a whole number, got {index}")
@@ -413,11 +413,11 @@ def _index_into(container: Value, index: Value) -> Value:
         return container[i]
     if isinstance(container, dict):
         if not isinstance(index, str):
-            raise ExprError(f"object key must be a string, got {_type_name(index)}")
+            raise ExprError(f"object key must be a string, got {type_name(index)}")
         if index not in container:
             raise ExprError(f"object has no key {index!r}")
         return container[index]
-    raise ExprError(f"cannot index into a {_type_name(container)}")
+    raise ExprError(f"cannot index into a {type_name(container)}")
 
 
 class _Parser:
@@ -513,7 +513,7 @@ class _Parser:
                     numbers = is_number(left) and is_number(right)
                     strings = isinstance(left, str) and isinstance(right, str)
                     if not (numbers or strings):
-                        raise ExprError(f"cannot compare {_type_name(left)} and {_type_name(right)} with '{op}'")
+                        raise ExprError(f"cannot compare {type_name(left)} and {type_name(right)} with '{op}'")
                     result = _COMPARISONS[op](left, right)
                 return bool(result)
         return left
@@ -536,12 +536,12 @@ class _Parser:
                 elif is_number(value) and is_number(right):
                     value = value + right
                 else:
-                    raise ExprError(f"cannot use '+' between {_type_name(value)} and {_type_name(right)}")
+                    raise ExprError(f"cannot use '+' between {type_name(value)} and {type_name(right)}")
             elif c == "-":
                 self.pos += 1
                 right = self._term()
                 if not (is_number(value) and is_number(right)):
-                    raise ExprError(f"'-' requires two numbers, got {_type_name(value)} and {_type_name(right)}")
+                    raise ExprError(f"'-' requires two numbers, got {type_name(value)} and {type_name(right)}")
                 value = value - right
             else:
                 return value
@@ -554,13 +554,13 @@ class _Parser:
                 self.pos += 1
                 right = self._unary()
                 if not (is_number(value) and is_number(right)):
-                    raise ExprError(f"'*' requires two numbers, got {_type_name(value)} and {_type_name(right)}")
+                    raise ExprError(f"'*' requires two numbers, got {type_name(value)} and {type_name(right)}")
                 value = value * right
             elif c == "/":
                 self.pos += 1
                 right = self._unary()
                 if not (is_number(value) and is_number(right)):
-                    raise ExprError(f"'/' requires two numbers, got {_type_name(value)} and {_type_name(right)}")
+                    raise ExprError(f"'/' requires two numbers, got {type_name(value)} and {type_name(right)}")
                 if right == 0:
                     raise ExprError("division by zero")
                 value = value / right
@@ -568,7 +568,7 @@ class _Parser:
                 self.pos += 1
                 right = self._unary()
                 if not (is_number(value) and is_number(right)):
-                    raise ExprError(f"'%' requires two numbers, got {_type_name(value)} and {_type_name(right)}")
+                    raise ExprError(f"'%' requires two numbers, got {type_name(value)} and {type_name(right)}")
                 value = value % right
             else:
                 return value
@@ -579,7 +579,7 @@ class _Parser:
             self.pos += 1
             value = self._unary()
             if not is_number(value):
-                raise ExprError(f"unary '-' requires a number, got {_type_name(value)}")
+                raise ExprError(f"unary '-' requires a number, got {type_name(value)}")
             return -value
         if c == "+":
             self.pos += 1
@@ -644,14 +644,14 @@ class _Parser:
                     raise ExprError(f"'.shift(...)' requires '{name}' to take at least one argument")
                 if not is_number(args[0]):
                     raise ExprError(
-                        f"'.shift(...)' is not supported - '{name}''s first argument is {_type_name(args[0])}"
+                        f"'.shift(...)' is not supported - '{name}''s first argument is {type_name(args[0])}"
                     )
                 self.pos = name_end + 1
                 offset_start = self.pos
                 offset = self._or()
                 offset_span = self.text[offset_start : self.pos]
                 if not is_number(offset):
-                    raise ExprError(f"'.shift(...)' requires a number argument, got {_type_name(offset)}")
+                    raise ExprError(f"'.shift(...)' requires a number argument, got {type_name(offset)}")
                 if not is_duration_text(offset_span, self.duration_vars):
                     raise ExprError(
                         f"'.shift(...)' needs a duration for its offset (a literal like 5s, "
@@ -681,13 +681,13 @@ class _Parser:
         for kind, payload in pending:
             if kind == "unit":
                 if not is_number(value):
-                    raise ExprError(f"'.{payload}' requires a number, got {_type_name(value)}")
+                    raise ExprError(f"'.{payload}' requires a number, got {type_name(value)}")
                 value = value / _TIME_UNITS[payload]
             else:
                 if not is_number(value):
-                    raise ExprError(f"'.{kind}(...)' requires a number, got {_type_name(value)}")
+                    raise ExprError(f"'.{kind}(...)' requires a number, got {type_name(value)}")
                 if not is_number(payload):
-                    raise ExprError(f"'.{kind}(...)' requires a number argument, got {_type_name(payload)}")
+                    raise ExprError(f"'.{kind}(...)' requires a number argument, got {type_name(payload)}")
                 value = _VALUE_METHODS[kind](value, payload)
         return value
 
@@ -737,7 +737,7 @@ class _Parser:
             unit = self._match_time_unit(after_dot)
             if unit is not None:
                 if not is_number(value):
-                    raise ExprError(f"'.{unit}' requires a number, got {_type_name(value)}")
+                    raise ExprError(f"'.{unit}' requires a number, got {type_name(value)}")
                 self.pos = after_dot + len(unit)
                 value = value / _TIME_UNITS[unit]
                 continue
@@ -747,11 +747,11 @@ class _Parser:
             method_name = self.text[after_dot:name_end]
             if method_name in _VALUE_METHODS and name_end < len(self.text) and self.text[name_end] == "(":
                 if not is_number(value):
-                    raise ExprError(f"'.{method_name}(...)' requires a number, got {_type_name(value)}")
+                    raise ExprError(f"'.{method_name}(...)' requires a number, got {type_name(value)}")
                 self.pos = name_end + 1
                 arg = self._or()
                 if not is_number(arg):
-                    raise ExprError(f"'.{method_name}(...)' requires a number argument, got {_type_name(arg)}")
+                    raise ExprError(f"'.{method_name}(...)' requires a number argument, got {type_name(arg)}")
                 if self._peek() != ")":
                     raise ExprError("expected ')'")
                 self.pos += 1
@@ -905,7 +905,7 @@ class _Parser:
                     if then_category != else_category:
                         raise ExprError(
                             f"terop()'s then/else branches must be the same type, got "
-                            f"{_type_name(args[1])} and {_type_name(args[2])}"
+                            f"{type_name(args[1])} and {type_name(args[2])}"
                         )
                 args, pending = self._consume_call_postfix_chain(name, args)
                 try:

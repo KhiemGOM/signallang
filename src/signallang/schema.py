@@ -5,6 +5,8 @@ real ROS-backed implementation is a Phase 3 concern, outside this package;
 DictSchemaProvider here exists for tests.
 """
 
+from __future__ import annotations
+
 from typing import Protocol
 
 
@@ -17,6 +19,17 @@ class SchemaProvider(Protocol):
     def default_at(self, path: list):
         """The zero-initialized value for the field at `path` - a plain
         float/str for a leaf, or a nested dict for a sub-message."""
+        ...
+
+    def type_at(self, path: list) -> str | None:
+        """Optional. The expected value-type name for the leaf field at
+        `path` - one of "bool"/"int"/"float"/"string"/"array"/"object",
+        or None for "no opinion" (an unrecognized path, or a sub-message
+        rather than a leaf). vm.py checks for this method's existence
+        with getattr(..., "type_at", None) before ever calling it, so an
+        existing SchemaProvider implementation that predates this method
+        (a real ROS-backed one, say) keeps working completely unchanged
+        - type-checking is opt-in, never required."""
         ...
 
 
@@ -52,3 +65,31 @@ class DictSchemaProvider:
         if isinstance(node, dict):
             return {k: self.default_at(path + [k]) for k in node}
         return node
+
+    def type_at(self, path: list) -> str | None:
+        """Derived straight from the default value's own Python type -
+        no separate type-declaration syntax needed, since the schema
+        dict already has to specify a default of the right type anyway
+        (write `{"level": 0}` for an Int field, `{"ratio": 0.0}` for a
+        Float one, `{"valid": False}` for a Bool one)."""
+        if not path:
+            return None
+        node = self._node_at(path[:-1]).get(path[-1])
+        if isinstance(node, dict):
+            return None  # a sub-message, not a leaf - no single type
+        return _python_value_type_name(node)
+
+
+def _python_value_type_name(value) -> str | None:
+    # bool checked first - Python's bool is an int subclass.
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    return None

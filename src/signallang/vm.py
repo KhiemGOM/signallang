@@ -351,6 +351,7 @@ class ScriptRun:
         if not path:
             self.msg = value if isinstance(value, dict) else {"data": value}
             return
+        self._check_schema_type(path, value)
         cur = self.msg
         for seg in path[:-1]:
             nxt = cur.get(seg)
@@ -359,6 +360,29 @@ class ScriptRun:
                 cur[seg] = nxt
             cur = nxt
         cur[path[-1]] = value
+
+    def _check_schema_type(self, path: list, value) -> None:
+        """Optional: only runs if schema_provider defines type_at() at
+        all (checked via getattr rather than calling it unconditionally
+        - an existing SchemaProvider that predates this method, a real
+        ROS-backed one for instance, should keep working completely
+        unchanged, never suddenly start failing scripts it always
+        accepted). A whole sub-message being written at once (value is
+        a dict - `msg = json {...};` or similar) is skipped: there's no
+        single field-type to check it against, and every leaf inside it
+        gets its own check when whatever wrote it did so field by
+        field."""
+        if self.schema_provider is None or isinstance(value, dict):
+            return
+        type_at = getattr(self.schema_provider, "type_at", None)
+        if type_at is None:
+            return
+        expected = type_at(path)
+        if expected is None:
+            return
+        actual = expr.type_name(value)
+        if actual != expected:
+            raise ScriptError(f"'{'.'.join(path)}' expects {expected}, got {actual}")
 
     def _current_msg(self) -> dict:
         result = copy.deepcopy(self.msg)

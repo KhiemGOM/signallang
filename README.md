@@ -291,6 +291,25 @@ first (`var tmp = [1, 2, 3]; data = tmp[0];`) — an array literal as the
 entire value of a field/`send` is always schema-resolved, never indexed
 in place.
 
+**Schema type-checking** — optional. If `schema_provider` defines a
+`type_at(path)` method, every field write is checked against it (skip
+this if a schema doesn't provide one — an existing implementation that
+predates this method keeps working completely unchanged, never starts
+failing scripts it always accepted). `DictSchemaProvider` derives the
+expected type straight from each field's own default value — write
+`{"level": 0}` for an `Int` field, `{"ratio": 0.0}` for `Float`,
+`{"valid": False}` for `Bool` — no separate type-declaration syntax
+needed:
+
+```
+schema = DictSchemaProvider({"level": 0, "ratio": 0.0})
+# ratio = 5;  -> rejected: 'ratio' expects float, got int
+```
+
+A whole sub-message written at once (a `json {}` literal assigned
+directly to an object field) isn't walked recursively — only a single
+leaf value being written has one type to check.
+
 ### `msg`
 
 With a `schema_provider`, the message starts fully defaulted (every

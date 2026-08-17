@@ -6,6 +6,22 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.2.0] — 2026-08-17
 
 ### Added
+- Optional schema type-checking: `SchemaProvider` gains a `type_at(path)`
+  method, checked on every field write when present. Genuinely optional -
+  `vm.py` checks for the method's existence via `getattr` before ever
+  calling it, so an existing `SchemaProvider` implementation that
+  predates this (a real ROS-backed one, say) keeps publishing exactly
+  what it always did, never suddenly failing scripts it used to accept.
+  `DictSchemaProvider` derives the expected type straight from each
+  field's own default value's Python type (`{"level": 0}` for `Int`,
+  `{"ratio": 0.0}` for `Float`, `{"valid": False}` for `Bool`) - no
+  separate type-declaration syntax needed, since the schema dict already
+  has to specify a default of the right shape anyway. Only checks a
+  single leaf value being written; a whole sub-message written at once
+  (`header = json {...};`) is skipped, not walked recursively - each of
+  its own leaves gets checked individually if written that way instead.
+  This is the piece the whole type-system effort was originally asked
+  for: "pattern match to schemas is somewhat more guaranteed."
 - `Duration` - a compile-time-only type (never a runtime `Value`, so it
   can't be stored in an array/object or returned from a function),
   propagated through exactly two shapes: a duration literal (`10s`)

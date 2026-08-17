@@ -454,8 +454,60 @@ def test_json_object_as_a_positional_array_fill_element():
     # needs a schema (the outer [] hasn't changed meaning), but the
     # element itself is schema-free.
     schema = DictSchemaProvider({"first": 0.0, "second": 0.0})
-    results, _ = run_all("send [json { a: 1, b: 2 }, 5];", schema_provider=schema)
+    results, _ = run_all("send [json { a: 1, b: 2 }, 5.0];", schema_provider=schema)
     assert results[0].value == {"first": {"a": 1.0, "b": 2.0}, "second": 5.0}
+
+
+# -- optional schema type-checking (DictSchemaProvider.type_at) --------------
+
+def test_schema_type_check_passes_when_types_match():
+    schema = DictSchemaProvider({"is_valid": False, "level": 0, "ratio": 0.0, "name": ""})
+    src = "is_valid = true;\nlevel = 5;\nratio = 2.5;\nname = \"x\";\nsend hz 1 dur 1t;"
+    results, _ = run_all(src, schema_provider=schema)
+    assert results[0].value == {"is_valid": True, "level": 5, "ratio": 2.5, "name": "x"}
+
+
+def test_schema_type_check_rejects_bool_field_written_a_number():
+    schema = DictSchemaProvider({"is_valid": False})
+    with pytest.raises(ScriptError):
+        run_all("is_valid = 5;\nsend;", schema_provider=schema)
+
+
+def test_schema_type_check_rejects_int_field_written_a_float():
+    schema = DictSchemaProvider({"level": 0})
+    with pytest.raises(ScriptError):
+        run_all("level = 5.5;\nsend;", schema_provider=schema)
+
+
+def test_schema_type_check_rejects_float_field_written_an_int():
+    schema = DictSchemaProvider({"ratio": 0.0})
+    with pytest.raises(ScriptError):
+        run_all("ratio = 5;\nsend;", schema_provider=schema)
+
+
+def test_schema_type_check_skips_a_whole_sub_message_write():
+    # a dict being written at once (a json {} literal assigned directly
+    # to an object-typed field) has no single leaf type to check against
+    # - each of ITS OWN leaves would get checked if written individually
+    # instead, but this form is deliberately not walked recursively.
+    schema = DictSchemaProvider({"header": {"frame_id": ""}})
+    results, _ = run_all('header = json { frame_id: "map" };\nsend hz 1 dur 1t;', schema_provider=schema)
+    assert results[0].value == {"header": {"frame_id": "map"}}
+
+
+def test_schema_without_type_at_is_completely_unaffected():
+    # a SchemaProvider implementation that predates type_at (a real
+    # ROS-backed one, for instance) must keep publishing exactly what it
+    # always did - type-checking is opt-in, never assumed.
+    class LegacySchemaProvider:
+        def fields_at(self, path):
+            return []
+
+        def default_at(self, path):
+            return {} if not path else 0.0
+
+    results, _ = run_all("is_valid = 5;\nsend hz 1 dur 1t;", schema_provider=LegacySchemaProvider())
+    assert results[0].value == {"is_valid": 5}
 
 
 # -- msg starts fully defaulted when a schema is given -----------------------
