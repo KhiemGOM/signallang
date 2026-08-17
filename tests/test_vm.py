@@ -183,6 +183,37 @@ def test_live_static_discrete_random_walk_pattern():
         running = v
 
 
+def test_rand_walk_bang_call_accumulates_like_the_hand_written_pattern():
+    results, _ = run_all("walk = rand_walk!(-1, 1);\nsend hz 1 dur 20t;")
+    values = [r.value["walk"] for r in results]
+    running = 0.0
+    for v in values:
+        assert (v - running) in (-1.0, 0.0, 1.0)
+        running = v
+
+
+def test_brown_motion_bang_call_accumulates_like_the_hand_written_pattern():
+    results, _ = run_all("bm = brown_motion!(0, 0.01);\nsend hz 1 dur 20t;")
+    values = [r.value["bm"] for r in results]
+    running = 0.0
+    for v in values:
+        assert abs(v - running) < 1.0  # each step is one small noise() draw
+        running = v
+
+
+def test_rand_walk_resets_when_binding_is_rebound():
+    # same reset-on-rebind schedule as any other static, since it's
+    # built on the identical mechanism.
+    src = """
+    repeat 2 {
+        walk = rand_walk!(1, 1);
+        send hz 1 dur 2t;
+    }
+    """
+    results, _ = run_all(src)
+    assert [r.value["walk"] for r in results] == [1.0, 2.0, 1.0, 2.0]
+
+
 def test_timer_reset_zeros_eager_timer_immediately():
     src = "var mt = timer();\nsend hz 1 dur 1t;\nmt.reset();\ndata = mt.s;\nsend hz 1 dur 1t;"
     results, _ = run_all(src)

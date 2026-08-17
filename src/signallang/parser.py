@@ -51,8 +51,21 @@ _KEYWORDS = frozenset(
         "reset",
         "msg",
         "static",
+        "rand_walk",
+        "brown_motion",
     }
 )
+# `name!(args)` sugar for the two accumulator patterns that need a
+# persisted, per-tick-stepping value and so can never be a plain
+# function (a function call has no memory of the last time it was
+# called) - value maps to the step expression added each tick, `{args}`
+# filled in with whatever the call's own args were. Neither name exists
+# in expr.py's _FUNCTIONS at all - only this bang-call form is valid,
+# same as timer()/latching_timer() only existing as a var-decl form.
+_ACCUMULATOR_FUNCTIONS = {
+    "rand_walk": "discrete_uniform({args})",  # fixed-step-size, discrete lattice
+    "brown_motion": "noise({args})",  # Gaussian increment - simulated Brownian motion
+}
 
 
 def _strip_comments(text: str) -> str:
@@ -620,9 +633,12 @@ class Parser:
         not `linear!(_t, 20, 30, 10s)`). name isn't validated here - an
         unknown function surfaces the same "unknown function" error at
         eval time as any other bad call would, structural parsing doesn't
-        need to know the exact whitelist. Backtracks fully on any
-        mismatch (no identifier, no '!', '!' not followed directly by
-        '(') so the caller can fall through to a plain value.
+        need to know the exact whitelist (except _ACCUMULATOR_FUNCTIONS,
+        below, which desugars to a real static-accumulating body instead
+        of a bare return - so it does need to recognize those two names
+        specifically). Backtracks fully on any mismatch (no identifier,
+        no '!', '!' not followed directly by '(') so the caller can fall
+        through to a plain value.
 
         Anything after the call's own closing ')' - `.shift(...)`,
         `.scale(...)`, `.add(...)`/`.bias(...)`, `.s`/`.m`/`.ms`, any
@@ -651,11 +667,18 @@ class Parser:
         args_text = self.text[self.pos : args_end].strip()
         self.pos = args_end
         self._expect_char(")")
+        trailing = self._scan_value_span(stop_chars, stop_at_send_modifiers, allow_empty=True).text
+        if name in _ACCUMULATOR_FUNCTIONS:
+            step_expr = _ACCUMULATOR_FUNCTIONS[name].format(args=args_text)
+            body = [
+                StaticDecl(name="value", value=ExprSpan("0")),
+                StaticReassign(name="value", value=ExprSpan(f"value + {step_expr}")),
+            ]
+            return LiveBlock(body=body, return_expr=ExprSpan("value" + trailing))
         if name in TIME_SHAPED_FUNCTIONS:
             call_text = f"{name}(_t, {args_text})" if args_text else f"{name}(_t)"
         else:
             call_text = f"{name}({args_text})"
-        trailing = self._scan_value_span(stop_chars, stop_at_send_modifiers, allow_empty=True).text
         return LiveBlock(body=[], return_expr=ExprSpan(call_text + trailing))
 
 

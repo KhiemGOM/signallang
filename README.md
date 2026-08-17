@@ -464,25 +464,30 @@ Python sampling.
 
 **Random walk / Brownian motion**
 
-Neither is a function — both need a value that persists and accumulates
-across ticks, which no plain function call can do (a function call has
-no memory of the last time it was called). They're [`static`
-locals](#evaluation-timing-static-vs-live) plus one of the draws above,
-not builtins:
+```
+walk = rand_walk!(low, high);       # discrete_uniform(low, high) step each tick
+bm = brown_motion!(mean, stddev);   # noise(mean, stddev) step each tick
+```
+
+Neither is a plain function — both need a value that persists and
+accumulates across ticks, which no ordinary function call can do (a
+function call has no memory of the last time it was called). Like every
+other bang-callable name, `!` is still required — nothing is implicitly
+live regardless of which name it is. `rand_walk!(low, high)` desugars to
 
 ```
-rand_walk = live {
+live {
     static value = 0;
-    value = value + discrete_uniform(-1, 1);  # fixed step size
-    return value;
-};
-
-brown_motion = live {
-    static value = 0;
-    value = value + noise(0, 1);  # Gaussian increment
+    value = value + discrete_uniform(low, high);
     return value;
 };
 ```
+
+(`brown_motion!(mean, stddev)` the same, with `noise(mean, stddev)` as
+the step) — the identical `static`-local mechanism above, just spelled
+out so it doesn't have to be hand-written every time. `.shift`/`.scale`/
+`.add`/`.bias`/`.s`/`.m`/`.ms` after the call apply to the accumulated
+value, same as any other bang call: `rand_walk!(-1, 1).scale(10)`.
 
 The distinction is real, not just naming: a random walk in the classic
 sense steps on a discrete lattice (`discrete_uniform`, above); Brownian

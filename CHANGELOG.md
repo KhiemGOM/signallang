@@ -6,6 +6,20 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `rand_walk!(low, high)` / `brown_motion!(mean, stddev)` - bang-call
+  sugar for the two accumulator recipes below, spelled out so they don't
+  have to be hand-written every time. Neither exists as a plain function
+  (still can't - no memory of the last call) and neither is registered
+  in expr.py's function table at all; only the `!` form is valid, same
+  as `timer()`/`latching_timer()` only existing as a var-decl form.
+  `!` is still required, same as every other bang-callable name -
+  nothing is implicitly live regardless of which name it is.
+  `rand_walk!(low, high)` desugars to `live { static value = 0; value =
+  value + discrete_uniform(low, high); return value; };`
+  (`brown_motion!` the same, with `noise(mean, stddev)` as the step).
+  Trailing postfix ops apply to the accumulated value as usual:
+  `rand_walk!(-1, 1).scale(10)`. Both names are reserved, like every
+  other built-in.
 - `discrete_uniform(low, high)` - a random-distribution builtin like
   `uniform`, but draws a whole number from `[low, high]` inclusive
   rather than the continuum in between; both bounds must themselves be

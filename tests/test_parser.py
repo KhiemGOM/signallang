@@ -296,6 +296,41 @@ def test_bang_call_with_no_args():
     assert node.return_expr.text == "noise()"
 
 
+def test_rand_walk_bang_call_desugars_to_a_static_accumulator():
+    prog = parse("walk = rand_walk!(-1, 1);")
+    node = prog.body[0].value
+    assert isinstance(node, LiveBlock)
+    assert node.body == [
+        StaticDecl(name="value", value=ExprSpan("0")),
+        StaticReassign(name="value", value=ExprSpan("value + discrete_uniform(-1, 1)")),
+    ]
+    assert node.return_expr.text == "value"
+
+
+def test_brown_motion_bang_call_desugars_to_a_static_accumulator():
+    prog = parse("bm = brown_motion!(0, 1);")
+    node = prog.body[0].value
+    assert isinstance(node, LiveBlock)
+    assert node.body == [
+        StaticDecl(name="value", value=ExprSpan("0")),
+        StaticReassign(name="value", value=ExprSpan("value + noise(0, 1)")),
+    ]
+    assert node.return_expr.text == "value"
+
+
+def test_rand_walk_bang_call_trailing_postfix_applies_to_the_accumulator():
+    prog = parse("walk = rand_walk!(-1, 1).scale(10);")
+    node = prog.body[0].value
+    assert node.return_expr.text == "value.scale(10)"
+
+
+def test_rand_walk_and_brown_motion_are_reserved_names():
+    with pytest.raises(ScriptError):
+        parse("var rand_walk = 5;")
+    with pytest.raises(ScriptError):
+        parse("var brown_motion = 5;")
+
+
 def test_random_distribution_bang_calls_do_not_inject_t():
     # none of these are time-shaped - a fresh draw every tick is already
     # what live-wrapping a random function means, no _t argument to add.
