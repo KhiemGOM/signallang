@@ -1,3 +1,5 @@
+<img src="assets/banner.svg" alt="signallang — script the signal, scrap the loop" width="100%" />
+
 # signallang
 
 [![PyPI](https://img.shields.io/pypi/v/signallang)](https://pypi.org/project/signallang/)
