@@ -40,7 +40,8 @@ run.step()   # StepResult(value={'temperature': 20.5}, hz=2.0)
     [Timers](#timers) · [Signal-shape builtins](#signal-shape-builtins) ·
     [Random distributions](#random-distributions) ·
     [`.shift(offset)`](#shiftoffset) ·
-    [`func` (macros)](#func-macros)
+    [`func` (macros)](#func-macros) ·
+    [`extern` (host parameters)](#extern-host-parameters)
 - [Full worked example](#full-worked-example)
 - [Safety model](#safety-model)
 - [Prior art](#prior-art)
@@ -66,6 +67,15 @@ by a stepped VM. `ScriptRun.step()` runs instructions until the next
 `Send`, then returns. `compiler.py`/`vm.py` contain no thread, no clock,
 no `sleep()` — time inside the VM is a counted value, never measured by
 waiting.
+
+A script also compiles straight from a file — `.signal` is this
+package's own convention, not an enforced requirement:
+
+```python
+from signallang import compile_file
+
+compiled = compile_file("ramp.signal")
+```
 
 Pacing `step()` in real time is the caller's job:
 
@@ -641,6 +651,32 @@ compile-time error. A chain of macros calling each other several times
 each with no recursion anywhere can still multiply into an enormous
 expansion, so total expanded size is capped — the same blunt-backstop
 spirit as `MAX_HZ` capping publish rate, not a sophisticated analysis.
+
+### `extern` (host parameters)
+
+```
+extern ros_topic;              # required - new_run() must supply it, or this is an error
+extern ros_schema = "unknown"; # optional - falls back to this default if not supplied
+
+data = ros_topic;
+send;
+```
+
+```python
+run = compiled.new_run(external_params={"ros_topic": "/cmd_vel", "ros_schema": "geometry_msgs/msg/Twist"})
+run.externs["ros_topic"]  # "/cmd_vel" - readable from the host side too, independent of run.vars
+```
+
+A value the *host* supplies at `new_run()` time, not something the
+script computes — read-only from the script's own side (`ros_topic =
+"x";` is a compile-time error) and kept in its own namespace, `self.externs`,
+never merged into `self.vars`. An `extern` name and a `var` name still
+can't collide (same "already in scope" rule as two `var`s), even though
+the two live in separate runtime dicts — a script mixing up which one a
+given name is would be genuinely confusing either way. An extra key in
+`external_params` that no `extern` declares is ignored, not an error —
+the same dict can be reused across scripts that each only care about a
+subset of it.
 
 ## Full worked example
 

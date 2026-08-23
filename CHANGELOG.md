@@ -3,6 +3,29 @@
 All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `extern name;` / `extern name = expr;` - a parameter the *host*
+  supplies via `new_run(external_params={...})`, not something the
+  script computes. Lives in its own namespace (`ScriptRun.externs`),
+  separate from `self.vars` entirely - readable from the host side
+  independent of anything the script does with its own vars
+  (`run.externs["name"]`), and read-only from the script's own side
+  (assigning to one is a compile-time error). An `extern` name and a
+  `var` name still can't collide (same "already in scope" check as two
+  `var`s), even though the two are stored separately - a script mixing
+  up which one a given name is would be genuinely confusing regardless
+  of the underlying storage split. No default and nothing supplied by
+  the host is a `new_run()`-time error, not a lazy one deep in a live
+  block. Motivating case: a fake-publish host (e.g. a dashboard's
+  Publish tab) handing a script the topic name and message type it's
+  actually bound to, so the script can read `ros_topic`/`ros_schema`
+  instead of hardcoding them.
+- `compile_file(path)` - same as `compile_script()`, reading the source
+  from a file. `.signal` is this package's own naming convention for
+  such files, not an enforced requirement.
+
 ## [0.2.0] — 2026-08-17
 
 ### Added

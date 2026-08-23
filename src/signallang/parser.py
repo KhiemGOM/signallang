@@ -16,6 +16,7 @@ from .ast_nodes import (
     Block,
     Default,
     ExprSpan,
+    ExternDecl,
     For,
     If,
     LiveBlock,
@@ -39,6 +40,7 @@ _UNIT_SUFFIXES = ("ms", "s", "m", "t")  # longest match first
 _KEYWORDS = frozenset(
     {
         "var",
+        "extern",
         "if",
         "else",
         "repeat",
@@ -183,6 +185,13 @@ class Parser:
         self.known_vars: set = set()
         self.static_names: set = set()  # live-block statics currently in scope
         self.timer_names: set = set()  # known_vars declared via timer()/latching_timer()
+        # known_vars declared with `extern` rather than `var` - registered
+        # into known_vars too (so redeclaring one as a plain var, or vice
+        # versa, hits the same "already in scope" collision check), but
+        # tracked separately here so assignment parsing can reject writing
+        # to one (extern is host-supplied and read-only from the script).
+        self.extern_names: set = set()
+        self.externs: list = []  # ExternDecl nodes, source order - see Program.externs
         # known_vars whose entire RHS was exactly a duration literal (a
         # bare number does NOT count here - see expr.py's
         # is_duration_decl_text for why) or a bare reference to another
@@ -288,7 +297,7 @@ class Parser:
         self._skip_ws()
         if self.pos != len(self.text):
             raise ScriptError(f"unexpected trailing input: {self.text[self.pos:].strip()!r}", self.pos)
-        return Program(body=body, duration_vars=frozenset(self.duration_vars))
+        return Program(body=body, duration_vars=frozenset(self.duration_vars), externs=self.externs)
 
     def _parse_block_until(self, end_char: str, stmt_parser) -> list:
         stmts = []
@@ -305,6 +314,8 @@ class Parser:
         self._skip_ws()
         if self._looking_at_word("var"):
             return self._parse_var_decl()
+        if self._looking_at_word("extern"):
+            return self._parse_extern_decl()
         if self._looking_at_word("if"):
             return self._parse_if(self._parse_stmt)
         if self._looking_at_word("repeat"):
@@ -369,6 +380,27 @@ class Parser:
             self.duration_vars.add(name)
         return VarDecl(name=name, value=value)
 
+    def _parse_extern_decl(self):
+        """`extern name;` / `extern name = expr;` - registers into
+        known_vars (same collision check as var - a script mixing up
+        which one a name is would be genuinely confusing even though the
+        two live in separate runtime namespaces) and extern_names
+        (checked at assignment-parsing time to reject writing to one).
+        `=` is optional here, unlike var's, since a host-required extern
+        with no sensible default is exactly the point sometimes."""
+        self._advance_word("extern")
+        name = self._parse_ident()
+        default = None
+        if self._peek_char() == "=":
+            self.pos += 1
+            default = self._scan_expr_span(";")
+        self._expect_char(";")
+        self._declare_var(name)
+        self.extern_names.add(name)
+        decl = ExternDecl(name=name, default=default)
+        self.externs.append(decl)
+        return decl
+
     def _parse_path_stmt(self):
         """Message-field paths (`header.frame_id = "map";`) and var-index
         mutation (`config.retries = 5;`, `arr[0] = 5;`, where `config`/
@@ -425,6 +457,12 @@ class Parser:
                 accessors.append(("index", index_expr))
                 continue
             break
+        if path[0] in self.extern_names:
+            raise ScriptError(
+                f"cannot assign to '{path[0]}' - it's an extern parameter, supplied by the host "
+                "when the script is run, not something the script can write to",
+                self.pos,
+            )
         self._expect_char("=")
         if is_var:
             value = self._scan_expr_span(";")

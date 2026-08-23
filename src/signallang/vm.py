@@ -9,6 +9,7 @@ driver, or a host application's own timer/event-loop callback).
 from __future__ import annotations
 
 import copy
+import pathlib
 import random
 from dataclasses import dataclass
 
@@ -50,7 +51,14 @@ class StepResult:
 
 
 class ScriptRun:
-    def __init__(self, instructions: list, schema_provider=None, duration_vars: frozenset = frozenset()):
+    def __init__(
+        self,
+        instructions: list,
+        schema_provider=None,
+        duration_vars: frozenset = frozenset(),
+        externs: list = (),
+        external_params: dict | None = None,
+    ):
         self.instructions = instructions
         self.schema_provider = schema_provider
         self.duration_vars = duration_vars
@@ -81,6 +89,30 @@ class ScriptRun:
         self._send_ip: int | None = None
         self._send_ticks_done = 0
         self._send_start_t = 0.0
+
+        # Resolved once, upfront, before any instruction runs - see
+        # ExternDecl (ast_nodes.py) for why this is its own dict rather
+        # than folded into self.vars: it's the host's own namespace,
+        # readable independent of anything the script does with its own
+        # vars (run.externs["name"]), and never write-accessible from
+        # the script side (parser.py rejects assigning to an extern
+        # name). A default can't reference another extern - resolved in
+        # declaration order, into self.externs as it's built, so a
+        # later default technically *could* see an earlier extern's
+        # resolved value, but that's not a guarantee to rely on.
+        self.externs: dict = {}
+        params = external_params or {}
+        for decl in externs:
+            if decl.name in params:
+                self.externs[decl.name] = params[decl.name]
+            elif decl.default is not None:
+                self.externs[decl.name] = self._eval(decl.default)
+            else:
+                raise ScriptError(
+                    f"extern '{decl.name}' has no default and wasn't supplied - "
+                    "pass it via new_run(external_params={...}) or give the "
+                    "declaration a default value"
+                )
 
     # -- stepping -----------------------------------------------------------
 
@@ -176,6 +208,12 @@ class ScriptRun:
 
     def _flat_scope(self, live_timer_name: str | None = None) -> dict:
         scope = dict(self.vars)
+        # Merged in for read access from any expression (bare `ros_topic`
+        # works exactly like a var, syntactically) even though the
+        # storage is kept separate on self.externs - see ExternDecl.
+        # Name collisions with a var are rejected at parse time, so
+        # which side wins here never actually matters.
+        scope.update(self.externs)
         scope["t"] = self.master_t
         # A read-only, deep-copied snapshot of the message as statically
         # written so far (via `field = ...;`, not `field = live {...};`),
@@ -426,16 +464,44 @@ class ScriptRun:
 
 
 class CompiledScript:
-    def __init__(self, instructions: list, schema_provider=None, duration_vars: frozenset = frozenset()):
+    def __init__(
+        self,
+        instructions: list,
+        schema_provider=None,
+        duration_vars: frozenset = frozenset(),
+        externs: list = (),
+    ):
         self.instructions = instructions
         self.schema_provider = schema_provider
         self.duration_vars = duration_vars
+        self.externs = list(externs)  # ExternDecl nodes, source order
 
-    def new_run(self) -> ScriptRun:
-        return ScriptRun(self.instructions, schema_provider=self.schema_provider, duration_vars=self.duration_vars)
+    def new_run(self, external_params: dict | None = None) -> ScriptRun:
+        return ScriptRun(
+            self.instructions,
+            schema_provider=self.schema_provider,
+            duration_vars=self.duration_vars,
+            externs=self.externs,
+            external_params=external_params,
+        )
 
 
 def compile_script(source: str, schema_provider=None, max_hz: float = MAX_HZ) -> CompiledScript:
     program = parse(source)
     instructions = compile_program(program, max_hz=max_hz)
-    return CompiledScript(instructions, schema_provider=schema_provider, duration_vars=program.duration_vars)
+    return CompiledScript(
+        instructions,
+        schema_provider=schema_provider,
+        duration_vars=program.duration_vars,
+        externs=program.externs,
+    )
+
+
+def compile_file(path, schema_provider=None, max_hz: float = MAX_HZ) -> CompiledScript:
+    """Same as compile_script(), reading the source from a file - the
+    `.signal` extension is this language's own naming convention (not
+    enforced here; a file using a different extension still compiles
+    fine, `.signal` is just the recommended name so editors/tooling
+    have something to key syntax highlighting off of)."""
+    text = pathlib.Path(path).read_text(encoding="utf-8")
+    return compile_script(text, schema_provider=schema_provider, max_hz=max_hz)

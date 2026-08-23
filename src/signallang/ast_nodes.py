@@ -42,6 +42,23 @@ class VarDecl:
 
 
 @dataclass
+class ExternDecl:
+    """`extern name;` / `extern name = expr;` - declares a parameter the
+    *host* supplies (ScriptRun's `external_params`), not something the
+    script computes. Lives in its own namespace, separate from `self.vars`
+    - readable from the host side independent of anything the script
+    does with its own vars (`run.externs["name"]`), and read-only from
+    the script's own side (no bare `name = expr;` reassignment - see
+    parser.py's extern_names / is_extern check). `default` is used only
+    when the host doesn't supply a value for `name`; with no default and
+    no host-supplied value, resolving it is a new_run()-time error, not
+    a lazy one deep in a live block."""
+
+    name: str
+    default: ExprSpan | None
+
+
+@dataclass
 class TimerDecl:
     """`var name = timer();` / `var name = latching_timer();` - syntactically
     a VarDecl but semantically distinct: creates VM timer state, not a plain
@@ -181,3 +198,9 @@ class Program:
     # var - the only two shapes tracked as Duration-typed. See vm.py's
     # ScriptRun/expr.py's _Parser for where this is actually consulted.
     duration_vars: frozenset = field(default_factory=frozenset)
+    # ExternDecl nodes, collected in source order (same nodes also sit in
+    # `body` at whatever point they were declared - compiler.py compiles
+    # them there to a no-op, since resolving one is a new_run()-time
+    # concern, not an instruction to run in sequence). This is the
+    # convenient side-channel vm.py's compile_script() actually reads.
+    externs: list = field(default_factory=list)

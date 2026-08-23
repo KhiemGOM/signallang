@@ -15,6 +15,7 @@ from .ast_nodes import (
     Block,
     Default,
     ExprSpan,
+    ExternDecl,
     For,
     If,
     LiveBlock,
@@ -184,6 +185,8 @@ class Compiler:
             self._compile_wait(s)
         elif isinstance(s, Block):
             self._compile_block(s.body)
+        elif isinstance(s, ExternDecl):
+            pass  # resolved once at new_run() time, not an instruction - see Program.externs
         else:
             raise ScriptError(f"internal: unknown statement {s!r}")
 
