@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import pathlib
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from . import expr
@@ -56,7 +57,7 @@ class ScriptRun:
         instructions: list,
         schema_provider=None,
         duration_vars: frozenset = frozenset(),
-        externs: list = (),
+        externs: Sequence = (),
         external_params: dict | None = None,
     ):
         self.instructions = instructions
@@ -469,7 +470,7 @@ class CompiledScript:
         instructions: list,
         schema_provider=None,
         duration_vars: frozenset = frozenset(),
-        externs: list = (),
+        externs: Sequence = (),
     ):
         self.instructions = instructions
         self.schema_provider = schema_provider
