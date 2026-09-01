@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-01
+
 ### Added
 - `extern name;` / `extern name = expr;` - a parameter the *host*
   supplies via `new_run(external_params={...})`, not something the
@@ -25,6 +27,42 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `compile_file(path)` - same as `compile_script()`, reading the source
   from a file. `.signal` is this package's own naming convention for
   such files, not an enforced requirement.
+- `signallang` console script (`validate`/`run` subcommands) - `pip
+  install signallang` now ships a CLI, not just a library. `validate
+  FILE` compiles and reports a source-located error (line:col + a caret
+  under the offending character, for any `ScriptError` carrying a
+  `pos`) or a plain OK. `run FILE [--ticks N] [--ext KEY=VALUE]
+  [--step-instruction-budget N]` compiles, steps up to `--ticks` times
+  (default 20), and prints each sent message as one JSON line -
+  `--ext` supplies `extern` values (JSON-parsed when possible, else the
+  raw string), repeatable. Exists so checking a script doesn't require
+  writing a throwaway Python harness first; `compile_script`/
+  `CompiledScript`/`ScriptRun` remain the real embedding API,
+  unchanged.
+- `ScriptRun`/`CompiledScript.new_run()` accept `step_instruction_budget`
+  (default `DEFAULT_STEP_INSTRUCTION_BUDGET = 100_000`, now exported).
+
+### Fixed
+- A script with no `send`/`wait` anywhere inside an unconditional loop
+  - `repeat { x = x + 1; }`, say - compiled cleanly and then hung
+    `step()`'s own `while True:` forever: the only existing guard,
+    `_check_no_mid_body_infinite_send` (compiler.py), catches just the
+    narrower case of a `send dur inf;` made unreachable, not the
+    general one of no yielding statement at all. `step()` now counts
+    non-yielding instructions executed per call and raises
+    `ScriptError` past `step_instruction_budget` instead of hanging the
+    host's thread indefinitely - a real risk for anything embedding
+    this VM in a server or event loop, since a hostile or merely buggy
+    script had no way to be interrupted once compiled.
+
+### Changed
+- README opens with an explicit note that "signal" is this project's
+  own term for a structured, scheduled, time-varying *message* - not
+  audio/DSP signal processing. No sampling, filtering, or
+  frequency-domain anything; `hz` is publish rate, not a sample rate.
+  Added after review feedback that the name alone invites the DSP
+  reading despite the existing "structured data that changes over
+  time" appositive right after it.
 
 ## [0.2.0] — 2026-08-17
 

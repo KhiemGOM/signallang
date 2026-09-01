@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "signallang"
-version = "0.2.0"
+version = "0.3.0"
 description = "A small, safe scripting language for publishing synthetic signals - time-varying structured data, no eval/exec, no user-defined functions."
 readme = "README.md"
 license = { text = "Apache-2.0" }
