@@ -2,7 +2,14 @@ from .errors import ScriptError
 from .expr import ExprError, evaluate, parse_one
 from .realtime import run_realtime
 from .schema import DictSchemaProvider, SchemaProvider
-from .vm import CompiledScript, ScriptRun, StepResult, compile_file, compile_script
+from .vm import (
+    DEFAULT_STEP_INSTRUCTION_BUDGET,
+    CompiledScript,
+    ScriptRun,
+    StepResult,
+    compile_file,
+    compile_script,
+)
 
 __all__ = [
     "evaluate",
@@ -17,4 +24,5 @@ __all__ = [
     "DictSchemaProvider",
     "ScriptError",
     "run_realtime",
+    "DEFAULT_STEP_INSTRUCTION_BUDGET",
 ]

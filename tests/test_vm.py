@@ -771,3 +771,20 @@ def test_macro_calling_another_macro_works_end_to_end():
     """
     results, _ = run_all(src)
     assert results[0].value == {"data": 42}
+
+
+def test_infinite_loop_with_no_send_or_wait_raises_instead_of_hanging():
+    # `_check_no_mid_body_infinite_send` (compiler.py) only catches a
+    # `send dur inf;` made unreachable - a loop with no send/wait at all
+    # compiles cleanly and, without this guard, would spin step()'s
+    # `while True:` forever.
+    run = compile_script("var x = 0;\nrepeat {\n x = x + 1;\n}").new_run(step_instruction_budget=1_000)
+    with pytest.raises(ScriptError, match="step_instruction_budget"):
+        run.step()
+
+
+def test_step_instruction_budget_can_be_raised_for_a_legitimate_long_loop():
+    src = "var x = 0;\nrepeat 5000 {\n x = x + 1;\n}\ndata = x;\nsend hz 1 dur 1t;"
+    run = compile_script(src).new_run(step_instruction_budget=30_000)
+    result = run.step()
+    assert result.value["data"] == 5000.0

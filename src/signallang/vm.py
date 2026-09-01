@@ -37,6 +37,16 @@ from .compiler import (
 from .errors import ScriptError
 from .parser import parse
 
+# step() runs a plain Python `while True:` across instructions that don't
+# themselves yield (everything except SendInstr/WaitInstr - see
+# _check_no_mid_body_infinite_send in compiler.py for the one narrow case
+# caught at compile time). A script with no send/wait at all inside an
+# unconditional loop - `repeat { var x = x + 1; }` - compiles cleanly and
+# would otherwise hang the host's thread forever on the first step() call.
+# This is a per-step ceiling on non-yielding instructions, not a limit on
+# how many sends a script can produce overall.
+DEFAULT_STEP_INSTRUCTION_BUDGET = 100_000
+
 
 @dataclass
 class TimerState:
@@ -59,10 +69,12 @@ class ScriptRun:
         duration_vars: frozenset = frozenset(),
         externs: Sequence = (),
         external_params: dict | None = None,
+        step_instruction_budget: int = DEFAULT_STEP_INSTRUCTION_BUDGET,
     ):
         self.instructions = instructions
         self.schema_provider = schema_provider
         self.duration_vars = duration_vars
+        self.step_instruction_budget = step_instruction_budget
 
         self.ip = 0
         self.halted = False
@@ -120,6 +132,7 @@ class ScriptRun:
     def step(self) -> StepResult | None:
         if self.halted:
             return None
+        executed = 0
         while True:
             if self.ip >= len(self.instructions):
                 self.halted = True
@@ -129,6 +142,14 @@ class ScriptRun:
                 return self._do_send_tick(instr)
             if isinstance(instr, WaitInstr):
                 return self._do_wait_tick(instr)
+            executed += 1
+            if executed > self.step_instruction_budget:
+                raise ScriptError(
+                    f"step() executed more than {self.step_instruction_budget} instructions "
+                    "without a `send` or `wait` - likely an infinite loop with neither inside "
+                    "it (e.g. `repeat { var x = x + 1; }`). Pass a larger step_instruction_budget "
+                    "to new_run() if this is intentional."
+                )
             self._exec_instant(instr)
 
     def _exec_instant(self, instr) -> None:
@@ -477,13 +498,18 @@ class CompiledScript:
         self.duration_vars = duration_vars
         self.externs = list(externs)  # ExternDecl nodes, source order
 
-    def new_run(self, external_params: dict | None = None) -> ScriptRun:
+    def new_run(
+        self,
+        external_params: dict | None = None,
+        step_instruction_budget: int = DEFAULT_STEP_INSTRUCTION_BUDGET,
+    ) -> ScriptRun:
         return ScriptRun(
             self.instructions,
             schema_provider=self.schema_provider,
             duration_vars=self.duration_vars,
             externs=self.externs,
             external_params=external_params,
+            step_instruction_budget=step_instruction_budget,
         )
 
 

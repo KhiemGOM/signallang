@@ -28,6 +28,9 @@ classifiers = [
 ]
 dependencies = []
 
+[project.scripts]
+signallang = "signallang.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/KhiemGOM/signallang"
 Repository = "https://github.com/KhiemGOM/signallang"

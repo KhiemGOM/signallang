@@ -14,6 +14,14 @@ provided as input — full detail in [Safety model](#safety-model). Use
 cases: mocking a sensor feed, driving a UI demo, load-testing a message
 consumer, feeding a simulator.
 
+> **A note on "signal":** this is our own term for *any structured,
+> scheduled, time-varying message* — not audio/DSP signal processing.
+> There's no sampling, no filtering, no frequency-domain anything.
+> `linear!`, `square!`, `sinusoidal_wave!` etc. ([Signal-shape
+> builtins](#signal-shape-builtins)) describe how a *value* moves
+> between ticks, not waveforms to be processed - `hz` sets how often a
+> message publishes, not an audio sample rate.
+
 ```python
 from signallang import compile_script
 
@@ -29,6 +37,7 @@ run.step()   # StepResult(value={'temperature': 20.5}, hz=2.0)
 ## Contents
 
 - [Install](#install)
+- [CLI](#cli)
 - [Runtime model](#runtime-model)
 - [Language reference](#language-reference)
   - [Fields and values](#fields-and-values) · [Expressions](#expressions) ·
@@ -58,6 +67,34 @@ pip install signallang
 git clone https://github.com/KhiemGOM/signallang && cd signallang
 pip install -e ".[test]" && pytest
 ```
+
+## CLI
+
+`pip install signallang` also installs a `signallang` command, for
+checking a script without writing a Python harness first:
+
+```bash
+signallang validate demo.signal          # compile only; located error on failure
+signallang run demo.signal --ticks 5     # compile, step, print each sent message as JSON
+```
+
+```
+$ signallang validate demo.signal
+demo.signal:2:5: error: expected '='
+    tempeature 20;
+        ^
+
+$ signallang run demo.signal --ticks 3
+{"temperature": 20.0}
+{"temperature": 20.5}
+{"temperature": 21.0}
+```
+
+`run` accepts `--ext KEY=VALUE` (repeatable, value parsed as JSON when
+possible) to supply [`extern`](#extern-host-parameters) values, and
+`--step-instruction-budget` to raise the [instant-instruction
+ceiling](#safety-model) for a script with an intentionally long
+per-`step()` computation.
 
 ## Runtime model
 
@@ -719,6 +756,14 @@ test rig.
 - Malformed scripts (invalid field names, wrong array shape, mismatched
   positional fill) fail at `compile_script()` or the first `step()`,
   before any value is sent.
+- A script with no `send`/`wait` inside an unconditional loop (e.g.
+  `repeat { x = x + 1; }`) compiles cleanly - the compiler only rejects
+  the narrower case of a `send dur inf;` made unreachable, not the
+  general one. `step()` guards against this at runtime instead: it
+  raises `ScriptError` after `step_instruction_budget` instructions
+  (default 100,000, set via `new_run(step_instruction_budget=...)`)
+  execute without reaching a `send`, a `wait`, or the end of the
+  script, rather than hanging the host's thread forever.
 
 ## Prior art
 
