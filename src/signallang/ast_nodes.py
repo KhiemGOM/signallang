@@ -1,8 +1,4 @@
-"""Plain dataclasses for the statement-grammar AST. Structural only - no
-evaluation happens while building or holding these; expression leaves stay
-as verbatim source-text spans (ExprSpan), sliced and handed to
-expr.evaluate() only at VM render time.
-"""
+"""Statement AST nodes. Expression spans retain source locations and compiled trees."""
 
 from __future__ import annotations
 
@@ -12,6 +8,9 @@ from dataclasses import dataclass, field
 @dataclass
 class ExprSpan:
     text: str
+    pos: int | None = field(default=None, compare=False)
+    node: object = field(default=None, compare=False, repr=False)
+    generated: bool = field(default=False, compare=False, repr=False)
 
 
 @dataclass
@@ -77,7 +76,7 @@ class TimerReset:
 
 @dataclass
 class Seed:
-    """`seed(expr);` - reseeds the shared `random` module used by every
+    """`seed(expr);` - reseeds the run-owned random generator used by every
     random-distribution builtin, for reproducible runs. Top-level only,
     not valid inside a `live` block (reseeding every tick would make a
     rand_walk!/brown_motion! replay the same step every time, defeating
@@ -94,7 +93,7 @@ class Wait:
     to seconds at parse time like any other - never `Nt` (ticks), since
     a bare `wait` has no surrounding hz to convert a tick count against."""
 
-    duration: float
+    duration: float | ExprSpan
 
 
 @dataclass
@@ -184,19 +183,16 @@ class For:
 
 @dataclass
 class Send:
-    hz: float | None  # None -> MAX_HZ (compiler clamps)
+    hz: float | ExprSpan | None  # expressions resolve once on entering send
     dur_kind: str  # "wall" | "tick" | "inf"
-    dur_value: float | None  # None iff dur_kind == "inf"
+    dur_value: float | ExprSpan | None
     value: object | None  # Value | None - for `send [..]` / `send a;` sugar
 
 
 @dataclass
 class Program:
     body: list = field(default_factory=list)
-    # names of top-level vars whose entire right-hand side was either a
-    # duration literal (10s, 500ms) or a bare reference to another such
-    # var - the only two shapes tracked as Duration-typed. See vm.py's
-    # ScriptRun/expr.py's _Parser for where this is actually consulted.
+    # Legacy declaration metadata, not a type restriction.
     duration_vars: frozenset = field(default_factory=frozenset)
     # ExternDecl nodes, collected in source order (same nodes also sit in
     # `body` at whatever point they were declared - compiler.py compiles

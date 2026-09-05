@@ -35,6 +35,7 @@ from .ast_nodes import (
 )
 from .errors import ScriptError
 from .expr import RESERVED_NAMES, TIME_SHAPED_FUNCTIONS, is_duration_decl_text
+from .resources import MAX_DEPTH, MAX_SOURCE_CHARS
 
 _UNIT_SUFFIXES = ("ms", "s", "m", "t")  # longest match first
 _KEYWORDS = frozenset(
@@ -95,7 +96,14 @@ _ATOMIC_ARG_RE = re.compile(
     r"|^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$"  # identifier, or a dotted field path (linear.x)
     r'|^"[^"]*"$'  # string literal
 )
-_VAR_DECL_IN_BODY_RE = re.compile(r"\bvar\s+([A-Za-z_][A-Za-z0-9_]*)")
+_VAR_DECL_IN_BODY_RE = re.compile(r"\b(?:var|static|for)\s+([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _macro_locals(body):
+    # Strings are opaque even when they contain text resembling declarations.
+    return _VAR_DECL_IN_BODY_RE.findall(re.sub(r'"[^"]*"', '""', body))
+
+
 # A blunt backstop against exponential blowup from nested macro calls -
 # no single macro is unreasonably huge, but a chain of macros each
 # calling the next several times, with no recursion anywhere in sight,
@@ -107,7 +115,7 @@ _MAX_EXPANDED_CHARS = 200_000
 
 
 class _MacroDef:
-    __slots__ = ("name", "params", "body_text")
+    __slots__ = ("body_text", "name", "params")
 
     def __init__(self, name: str, params: list, body_text: str):
         self.name = name
@@ -141,7 +149,19 @@ def _substitute(text: str, mapping: dict) -> str:
         m = _IDENT_RE.match(text, i)
         if m:
             word = m.group(0)
-            out.append(mapping.get(word, word))
+            before = i - 1
+            after = m.end()
+            while before >= 0 and text[before].isspace():
+                before -= 1
+            while after < n and text[after].isspace():
+                after += 1
+            # Property names, object keys and unit suffixes are not variable references.
+            protected = (
+                (before >= 0 and text[before] == ".")
+                or (after < n and text[after] == ":")
+                or (i > 0 and text[i - 1].isdigit())
+            )
+            out.append(word if protected else mapping.get(word, word))
             i = m.end()
             continue
         out.append(c)
@@ -168,7 +188,7 @@ def _strip_comments(text: str) -> str:
             out.append(c)
             i += 1
             continue
-        if c == "/" and i + 1 < n and text[i + 1] == "/":
+        if c == "#" or (c == "/" and i + 1 < n and text[i + 1] == "/"):
             while i < n and text[i] != "\n":
                 out.append(" ")
                 i += 1
@@ -180,7 +200,21 @@ def _strip_comments(text: str) -> str:
 
 class Parser:
     def __init__(self, text: str):
+        if len(text) > MAX_SOURCE_CHARS:
+            raise ScriptError("script exceeds the maximum source size", 0)
         self.text = _strip_comments(text)
+        depth = 0
+        in_string = False
+        for i, char in enumerate(self.text):
+            if char == '"':
+                in_string = not in_string
+            elif not in_string:
+                if char in "([{":
+                    depth += 1
+                elif char in ")]}":
+                    depth -= 1
+                if depth > MAX_DEPTH:
+                    raise ScriptError("script exceeds maximum nesting depth", i)
         self.pos = 0
         self.known_vars: set = set()
         self.static_names: set = set()  # live-block statics currently in scope
@@ -192,12 +226,7 @@ class Parser:
         # to one (extern is host-supplied and read-only from the script).
         self.extern_names: set = set()
         self.externs: list = []  # ExternDecl nodes, source order - see Program.externs
-        # known_vars whose entire RHS was exactly a duration literal (a
-        # bare number does NOT count here - see expr.py's
-        # is_duration_decl_text for why) or a bare reference to another
-        # duration_vars name. Attached to Program at the end of parsing
-        # so vm.py can hand it to expr.py for checking Duration-required
-        # call arguments.
+        # Legacy declaration metadata; durations now compose as numeric seconds.
         self.duration_vars: set = set()
         self.macros: dict = {}  # name -> _MacroDef, declared with func
         self._expanding: list = []  # macro names currently being expanded - cycle guard
@@ -274,11 +303,16 @@ class Parser:
     def _parse_number(self) -> float:
         self._skip_ws()
         start = self.pos
-        while self.pos < len(self.text) and (self.text[self.pos].isdigit() or self.text[self.pos] == "."):
-            self.pos += 1
-        if self.pos == start:
+        match = re.match(r"(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?", self.text[start:])
+        if match is None:
             raise ScriptError("expected a number", start)
-        return float(self.text[start : self.pos])
+        self.pos += len(match.group())
+        if self.text[self.pos:self.pos + 1] == ".":
+            raise ScriptError("invalid number", start)
+        try:
+            return float(self.text[start : self.pos])
+        except ValueError:
+            raise ScriptError("invalid number", start) from None
 
     def _scan_expr_span(self, stop_chars: str) -> ExprSpan:
         self._skip_ws()
@@ -288,7 +322,7 @@ class Parser:
         if not text:
             raise ScriptError("expected an expression", start)
         self.pos = end
-        return ExprSpan(text)
+        return ExprSpan(text, start)
 
     # -- program / blocks -----------------------------------------------
 
@@ -296,7 +330,7 @@ class Parser:
         body = self._parse_block_until("", self._parse_stmt)
         self._skip_ws()
         if self.pos != len(self.text):
-            raise ScriptError(f"unexpected trailing input: {self.text[self.pos:].strip()!r}", self.pos)
+            raise ScriptError(f"unexpected trailing input: {self.text[self.pos :].strip()!r}", self.pos)
         return Program(body=body, duration_vars=frozenset(self.duration_vars), externs=self.externs)
 
     def _parse_block_until(self, end_char: str, stmt_parser) -> list:
@@ -343,6 +377,8 @@ class Parser:
         bad for a for-loop's own counter, which is actively mutated
         throughout the loop's execution, not just given an initial
         value once."""
+        if name in ("t", "_t", "and", "or", "not") or (name.startswith("__") and not self._expanding):
+            raise ScriptError(f"'{name}' is reserved", self.pos)
         if name in self.known_vars:
             raise ScriptError(
                 f"'{name}' is already in scope (an outer var or an enclosing for loop) - "
@@ -421,7 +457,7 @@ class Parser:
             if c == ".":
                 self.pos += 1
                 ident = self._parse_ident_or_keyword_reset()
-                if ident == "reset":
+                if ident == "reset" and self._peek_char() == "(":
                     self._expect_char("(")
                     self._expect_char(")")
                     self._expect_char(";")
@@ -463,6 +499,8 @@ class Parser:
                 "when the script is run, not something the script can write to",
                 self.pos,
             )
+        if path[0] in self.timer_names:
+            raise ScriptError("timers can only be changed with .reset()", self.pos)
         self._expect_char("=")
         if is_var:
             value = self._scan_expr_span(";")
@@ -527,7 +565,7 @@ class Parser:
         start_text = self.text[self.pos : dots].strip()
         if not start_text:
             raise ScriptError("expected a range start", self.pos)
-        start_span = ExprSpan(start_text)
+        start_span = ExprSpan(start_text, self.pos)
         self.pos = dots + 2
         self._skip_ws()
         end = None
@@ -570,12 +608,17 @@ class Parser:
         self._expect_char(";")
         return Send(hz=hz, dur_kind=dur_kind, dur_value=dur_value, value=value)
 
-    def _parse_hz_modifier(self) -> float | None:
+    def _parse_hz_modifier(self) -> float | ExprSpan | None:
         self._advance_word("hz")
         self._skip_ws()
         if self._looking_at_word("inf"):
             self._advance_word("inf")
             return None
+        if self._peek_char() == "(":
+            self.pos += 1
+            value = self._scan_expr_span(")")
+            self._expect_char(")")
+            return value
         return self._parse_number()
 
     def _parse_dur_modifier(self) -> tuple:
@@ -584,6 +627,14 @@ class Parser:
         if self._looking_at_word("inf"):
             self._advance_word("inf")
             return "inf", None
+        if self._peek_char() == "(":
+            self.pos += 1
+            value = self._scan_expr_span(")")
+            self._expect_char(")")
+            if self._peek_char() == "t":
+                self.pos += 1
+                return "tick", value
+            return "wall", value
         num = self._parse_number()
         unit = self._match_unit_suffix()
         if unit == "t":
@@ -605,6 +656,10 @@ class Parser:
     def _parse_wait(self):
         self._advance_word("wait")
         self._skip_ws()
+        if self._peek_char() == "(" or self._peek_char().isalpha():
+            value = self._scan_expr_span(";")
+            self._expect_char(";")
+            return Wait(duration=value)
         num = self._parse_number()
         unit = self._match_unit_suffix()
         if unit == "t":
@@ -653,7 +708,7 @@ class Parser:
         body_text = self.text[body_start:body_end]
         self.pos = body_end
         self._expect_char("}")
-        collision = set(_VAR_DECL_IN_BODY_RE.findall(body_text)) & set(params)
+        collision = set(_macro_locals(body_text)) & set(params)
         if collision:
             raise ScriptError(
                 f"macro '{name}': local var '{next(iter(collision))}' has the same name as a parameter",
@@ -697,9 +752,7 @@ class Parser:
         self._expect_char(")")
         self._expect_char(";")
         if len(args) != len(macro.params):
-            raise ScriptError(
-                f"macro '{name}' takes {len(macro.params)} argument(s), got {len(args)}", start
-            )
+            raise ScriptError(f"macro '{name}' takes {len(macro.params)} argument(s), got {len(args)}", start)
         return self._expand_macro_call(macro, args, start)
 
     def _scan_macro_arg(self, macro_name: str):
@@ -723,7 +776,7 @@ class Parser:
         self._macro_call_counter += 1
         call_id = self._macro_call_counter
         mapping = dict(zip(macro.params, args))
-        for local in _VAR_DECL_IN_BODY_RE.findall(macro.body_text):
+        for local in _macro_locals(macro.body_text):
             if local not in mapping:
                 mapping[local] = f"__{macro.name}_{call_id}_{local}"
         substituted = _substitute(macro.body_text, mapping)
@@ -740,6 +793,23 @@ class Parser:
         self._expanding.append(macro.name)
         try:
             body = self._parse_block_until("", self._parse_stmt)
+            # Expanded-source offsets are not offsets in the caller's file.
+            from dataclasses import fields, is_dataclass
+
+            def locate(value):
+                if isinstance(value, ExprSpan):
+                    value.pos = call_pos
+                    value.generated = True
+                elif isinstance(value, list):
+                    for child in value:
+                        locate(child)
+                elif is_dataclass(value):
+                    for item in fields(value):
+                        locate(getattr(value, item.name))
+
+            locate(body)
+        except ScriptError as error:
+            raise ScriptError(f"macro '{macro.name}': {error.message}", call_pos) from None
         finally:
             self._expanding.pop()
             self.text, self.pos = saved_text, saved_pos
@@ -794,7 +864,7 @@ class Parser:
         if not value_text and not allow_empty:
             raise ScriptError("expected a value", start)
         self.pos = i
-        return ExprSpan(value_text)
+        return ExprSpan(value_text, start)
 
     # -- values (assignment RHS / array elements / send's bare value) ---
 
@@ -820,9 +890,7 @@ class Parser:
             return bang_call
         return self._scan_value_span(stop_chars, stop_at_send_modifiers)
 
-    def _scan_value_span(
-        self, stop_chars: str, stop_at_send_modifiers: bool, allow_empty: bool = False
-    ) -> ExprSpan:
+    def _scan_value_span(self, stop_chars: str, stop_at_send_modifiers: bool, allow_empty: bool = False) -> ExprSpan:
         """The plain-expression fallback shared by _parse_value's own tail,
         live's one-line shorthand, and the bang-call's own trailing-postfix
         capture below - scans to whichever terminator applies in this
@@ -832,12 +900,14 @@ class Parser:
         that's fine - only a plain value actually requires content."""
         if stop_at_send_modifiers:
             return self._scan_send_leading_value_span(allow_empty)
+        self._skip_ws()
+        start = self.pos
         span_end = span.scan_span(self.text, self.pos, stop_chars)
         text = self.text[self.pos : span_end].strip()
         if not text and not allow_empty:
             raise ScriptError("expected a value", self.pos)
         self.pos = span_end
-        return ExprSpan(text)
+        return ExprSpan(text, start)
 
     def _parse_array_lit(self):
         self.pos += 1  # '['
@@ -981,15 +1051,15 @@ class Parser:
         if name in _ACCUMULATOR_FUNCTIONS:
             step_expr = _ACCUMULATOR_FUNCTIONS[name].format(args=args_text)
             body = [
-                StaticDecl(name="value", value=ExprSpan("0")),
-                StaticReassign(name="value", value=ExprSpan(f"value + {step_expr}")),
+                StaticDecl(name="value", value=ExprSpan("0", start)),
+                StaticReassign(name="value", value=ExprSpan(f"value + {step_expr}", start)),
             ]
-            return LiveBlock(body=body, return_expr=ExprSpan("value" + trailing))
+            return LiveBlock(body=body, return_expr=ExprSpan("value" + trailing, start, generated=True))
         if name in TIME_SHAPED_FUNCTIONS:
             call_text = f"{name}(_t, {args_text})" if args_text else f"{name}(_t)"
         else:
             call_text = f"{name}({args_text})"
-        return LiveBlock(body=[], return_expr=ExprSpan(call_text + trailing))
+        return LiveBlock(body=[], return_expr=ExprSpan(call_text + trailing, start, generated=True))
 
 
 def parse(source: str) -> Program:

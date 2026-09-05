@@ -16,6 +16,7 @@ Run it:
     python3 examples/stdout_signal.py
     python3 examples/stdout_signal.py | your_consumer
 """
+
 import json
 
 from signallang import compile_script, run_realtime

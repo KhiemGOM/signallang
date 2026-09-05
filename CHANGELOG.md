@@ -5,6 +5,124 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+[AUDIT.md](AUDIT.md) - a repository-wide engineering audit run against 0.3.0
+with a stronger model specifically to surface vulnerabilities the earlier
+passes missed (13 findings: 5 P1, 8 P2, plus 6 recommended additions). Every
+P1 finding was independently reproduced against the shipped 0.3.0 code
+before any fix below landed - not taken on the audit's word alone.
+
+### Fixed
+- **P1** Extern values were retained by reference: aliasing a compound
+  extern into a `var` and mutating the alias mutated the host's own dict
+  (`{"config": {"x": 1}}` became `{"config": {"x": 9}}` after one `step()`),
+  despite `extern` being documented read-only from the script side. Host
+  input, schema defaults, and published messages now go through
+  `resources.clone_value()` - a bounded deep-copy that also rejects cycles,
+  oversized containers, non-finite numbers, and non-string keys.
+- **P1** `step_instruction_budget` (the instant-instruction guard added
+  earlier for infinite loops with no `send`/`wait`) never bounded work
+  happening *inside* a single expression evaluation - confirmed
+  `step_instruction_budget=1` still let `binomial(1_000_000, 0.5)` run to
+  completion in one call. A new `operation_budget` (default 1,000,000,
+  `resources.Budget`) is spent by expression evaluation and value cloning,
+  independent of the VM's own instruction tape.
+- **P1** `poisson(lam)` silently returned the wrong distribution for large
+  `lam` - confirmed a 200-draw average of 745.01 for `poisson(1000)`
+  (expected ~1000), from the naive `exp(-lam)` product underflowing.
+  Re-verified after the fix: 999.705.
+- **P1** A `live`-bound field bypassed schema type checks entirely -
+  `level = "wrong";` correctly rejected against an `Int` schema field, but
+  `level = live "wrong";` published the same violation. Live output now
+  goes through the identical check as a static write.
+- **P1** Reading a `latching_timer()` after an unrelated statement executed
+  in between reported an elapsed time as if the read had happened earlier -
+  confirmed `elapsed = lt.s` reporting `2.0` instead of the documented
+  `0.0` on its first read, since building any expression's scope eagerly
+  resolved (and thus latched) every declared timer, not just the ones the
+  expression actually names. Timer identifiers now resolve lazily.
+- **P2** Writing a new field or live binding over part of an existing live
+  subtree left the old, now-overlapping binding active, so it kept
+  publishing stale values after being logically replaced.
+- **P2** Every run shared Python's global `random` module, so a seeded
+  run's output could change depending on unrelated `random` calls
+  elsewhere in the same process, and `seed()` reset state used by
+  unrelated host code too. Each `ScriptRun` now owns its own
+  `random.Random`, threaded through every distribution builtin.
+- **P2** `compile_script("data = 1 + ; send dur 1t;")` compiled
+  successfully - so `signallang validate` reported OK - and only failed on
+  the first `step()`, contradicting the documented "malformed scripts fail
+  before any value is sent." A few runtime-only failures also escaped the
+  CLI's handled exception types (`1 % 0`, `1.2.3`, an overflowing
+  distribution argument). Expression text is now parsed into a real AST at
+  compile time (see Added), so syntax errors surface there.
+- **P2** A `live` block's `var` with a duration-literal initializer lost
+  its Duration classification on scope exit; `static` initializers
+  couldn't see earlier statics declared in the same block or the block's
+  own `_t`; reassigning a Duration-typed `var` to a plain number kept the
+  old classification regardless.
+- **P2** Macro hygiene's identifier renaming had no syntactic awareness -
+  `func build(field) { var x = 1; field = json {x: x}; }` published the
+  mangled local name as a literal object key/field name, since plain text
+  substitution couldn't distinguish a variable reference from an object
+  key or a `.property` access.
+- **P2** `run_realtime()` measured its sleep window starting *after*
+  `step()` returned, so the VM's own evaluation time was added on top of
+  every requested period instead of being subtracted from it - confirmed a
+  20ms step cost turning a 10Hz (100ms) schedule into ~120ms spacing.
+  Pacing is now measured against a cumulative deadline.
+- **P2** Uneven parameter/type validation: `max_hz=0` reached a raw
+  `ZeroDivisionError` instead of a `ScriptError`; `send dur 1.5t` silently
+  sent two messages rather than rejecting a non-whole tick count; `+true`
+  and `sqrt(true)` treated `Bool` as a number even though the language
+  otherwise keeps it a distinct type from `Int`/`Float`.
+- **P2** `examples/websocket_signal.py`'s broadcast loop let one
+  disconnected client's send exception escape `asyncio.gather` and stop
+  delivery to every other client.
+
+### Added
+- `resources.py` - `clone_value()`, `Budget`, and `positive_integer`/
+  `positive_number` validators, used across `vm.py`/`schema.py`/`cli.py`
+  for the limits above.
+- `expression_tree.py` - expression text is now parsed once into a `Node`
+  tree (`compile_expression()`) and evaluated via `execute()`, instead of
+  being re-parsed from scratch on every single evaluation (previously true
+  for every re-evaluation of a `live` binding). `ExprSpan` now carries its
+  source position and a `generated` flag, so a runtime expression error -
+  including one raised from inside a macro-expanded or bang-desugared span -
+  resolves to a real file position instead of being unlocatable.
+- `ScriptRun`/`CompiledScript.new_run()` gain `operation_budget` and `seed`
+  (see Fixed). `StepResult` gains `timestamp`, `sequence`, and a `.delay`
+  property (`1/hz`); `ScriptRun` is directly iterable and gains
+  `.collect(ticks)`.
+- Live `hz`/`dur` in `send`, and a live duration in `wait` - a schedule
+  parameter can now be a host-controlled expression, validated before
+  publish rather than only once at compile time.
+- Keyframes / piecewise interpolation, for expressing startup/ramp/
+  plateau/shutdown schedules without long blocks of assignments and sends.
+- `run_async()` - an `asyncio` counterpart to `run_realtime()`, with
+  sync/async callback support and cooperative cancellation.
+  `run_realtime()` itself gains `cancelled`, `max_ticks`, and `late_policy`
+  (`"delay"`/`"catch_up"`/`"error"`).
+- `DictSchemaProvider(schema, strict=True)` - recursive shape validation
+  (missing/unknown keys, homogeneous array element types) on top of the
+  existing per-leaf `type_at()` check.
+- `signallang run` gains `--trace` (timing metadata + wait events),
+  `--seed`, `--operation-budget`, and `--max-hz`.
+- `hypothesis`-based property tests (`test_properties.py`), plus
+  `test_hardening.py` and `test_documentation.py` - regression coverage
+  for every finding above, statistical checks on the distribution
+  builtins, and executable README/example snippets.
+- `#` comments, alongside the existing `//` (several README examples used
+  `#` and would have failed to parse if actually run as written).
+
+### Changed
+- README restructured (merged "Install and CLI", consolidated "Safety and
+  limits") and opens with an explicit one-line clarification that "signal"
+  means a scheduled message, not audio/DSP processing.
+- `Development Status` bumped from Alpha to Beta; added `hypothesis` (test)
+  and `ruff`/`build` (dev) as dependencies; `mypy` config gains
+  `check_untyped_defs`.
+
 ## [0.3.0] — 2026-09-01
 
 ### Added

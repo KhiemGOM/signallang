@@ -8,4 +8,5 @@ class ScriptError(ValueError):
 
     def __init__(self, message: str, pos: int | None = None):
         self.pos = pos
+        self.message = message
         super().__init__(message if pos is None else f"{message} (at position {pos})")

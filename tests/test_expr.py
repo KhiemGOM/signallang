@@ -4,8 +4,8 @@ import pytest
 
 from signallang import ExprError, evaluate
 
-
 # -- correctness -------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "expr, variables, expected",
@@ -30,6 +30,7 @@ def test_arithmetic(expr, variables, expected):
 
 # -- comparisons ---------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "expr, variables, expected",
     [
@@ -53,6 +54,7 @@ def test_chained_comparison_rejected():
 
 # -- boolean operators ----------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "expr, variables, expected",
     [
@@ -75,6 +77,7 @@ def test_boolean_operators(expr, variables, expected):
 
 
 # -- Int vs Float ------------------------------------------------------------
+
 
 def test_int_literal_is_a_genuine_int():
     v = evaluate("5", {})
@@ -168,6 +171,7 @@ def test_terop_can_return_an_int_without_it_decaying_to_a_float():
 
 # -- Duration-required call arguments ----------------------------------------
 
+
 def test_duration_required_arg_accepts_a_bare_number():
     # a bare number is already implicitly seconds everywhere else in
     # this language - no unit required at the call site.
@@ -179,23 +183,20 @@ def test_duration_required_arg_accepts_a_tracked_duration_var():
     assert v == 0.0
 
 
-def test_duration_required_arg_rejects_an_untracked_var():
-    with pytest.raises(ExprError):
-        evaluate("square(0, 0, 1, count)", {"count": 2.0})
+def test_duration_argument_accepts_numeric_host_values():
+    assert evaluate("square(0, 0, 1, count)", {"count": 2.0}) == 0
 
 
-def test_duration_required_arg_rejects_an_arithmetic_expression():
-    with pytest.raises(ExprError):
-        evaluate("square(0, 0, 1, 1 + 1)", {})
+def test_duration_argument_accepts_arithmetic():
+    assert evaluate("square(0, 0, 1, 1 + 1)", {}) == 0
 
 
 def test_shift_offset_accepts_a_bare_number():
     assert evaluate("square(0, 0, 1, 2).shift(-1)", {}) == pytest.approx(1.0)
 
 
-def test_shift_offset_rejects_an_untracked_var():
-    with pytest.raises(ExprError):
-        evaluate("square(0, 0, 1, 2).shift(off)", {"off": -1.0})
+def test_shift_offset_accepts_numeric_host_values():
+    assert evaluate("square(0, 0, 1, 2).shift(off)", {"off": -1.0}) == 1
 
 
 def test_shift_offset_accepts_a_tracked_duration_var():
@@ -204,6 +205,7 @@ def test_shift_offset_accepts_a_tracked_duration_var():
 
 
 # -- terop requires matching branch types ------------------------------------
+
 
 @pytest.mark.parametrize(
     "expr",
@@ -233,6 +235,7 @@ def test_terop_allows_matching_branch_types(expr):
 
 
 # -- bool is a real type, not disguised 1.0/0.0 -----------------------------
+
 
 @pytest.mark.parametrize(
     "expr, expected",
@@ -316,6 +319,7 @@ def test_terop_can_return_a_bool_without_it_decaying_to_a_float():
 
 # -- terop -----------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "expr, variables, expected",
     [
@@ -342,6 +346,7 @@ def test_terop_dead_branch_still_raises():
 # Plain, pure functions of an explicit elapsed-time argument - no magic,
 # same as sin/cos. `name!(args)` sugar (parser.py) is what injects _t as
 # that argument automatically for the fixed TIME_SHAPED_FUNCTIONS set.
+
 
 @pytest.mark.parametrize(
     "expr, variables, expected",
@@ -489,6 +494,7 @@ def test_bang_syntax_is_a_parse_time_construct_not_an_expr_operator():
 
 # -- postfix result transforms: .scale/.add/.bias ---------------------------
 
+
 @pytest.mark.parametrize(
     "expr, variables, expected",
     [
@@ -528,6 +534,7 @@ def test_value_method_rejects_string_operands(expr):
 
 
 # -- .shift(offset): rewrites a call's first argument before calling -------
+
 
 @pytest.mark.parametrize(
     "expr, expected",
@@ -590,6 +597,7 @@ def test_shift_only_recognized_within_a_call_postfix_chain():
 
 
 # -- arrays and objects ------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "expr, variables, expected",
@@ -677,6 +685,7 @@ def test_var_can_hold_and_be_indexed_as_a_compound_value():
 
 # -- strings ---------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "expr, variables, expected",
     [
@@ -731,6 +740,7 @@ def test_string_type_errors(expr, variables):
 
 
 # -- safety: never actually executes anything ------------------------------
+
 
 @pytest.mark.parametrize(
     "expr",

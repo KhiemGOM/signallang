@@ -39,9 +39,7 @@ def scan_span(text: str, start: int, stop_chars: str) -> int:
                 raise ScriptError(f"unmatched '{c}'", i)
             depth -= 1
         i += 1
-    raise ScriptError(
-        f"unexpected end of input while scanning for one of {stop_chars!r}", start
-    )
+    raise ScriptError(f"unexpected end of input while scanning for one of {stop_chars!r}", start)
 
 
 def scan_until_token(text: str, start: int, token: str) -> int:

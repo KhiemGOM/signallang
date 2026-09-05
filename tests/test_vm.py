@@ -301,7 +301,7 @@ def test_array_literal_without_schema_provider_at_a_nested_field():
 
 
 def test_nested_array_and_json_without_schema_provider():
-    results, _ = run_all('points = [1, json { x: 2, y: 3 }];\nsend hz 1 dur 1t;')
+    results, _ = run_all("points = [1, json { x: 2, y: 3 }];\nsend hz 1 dur 1t;")
     assert results[0].value == {"points": [1.0, {"x": 2.0, "y": 3.0}]}
 
 
@@ -362,13 +362,10 @@ def test_duration_var_copy_still_propagates():
     assert results[0].value["data"] == 0.0
 
 
-def test_plain_var_rejected_where_duration_required():
-    # regression test for the actual motivating gap: a var that was
-    # never declared from a duration literal, silently passed where one
-    # was expected.
-    src = "var count = 5;\ndata = square(0, 0, 1, count);\nsend;"
-    with pytest.raises((ScriptError, ExprError)):
-        run_all(src)
+def test_numeric_var_can_supply_duration_seconds():
+    src = "var count = 5; data = square(0, 0, 1, count); send dur 1t;"
+    results, _ = run_all(src)
+    assert results[0].value["data"] == 0
 
 
 def test_if_branches_on_string_comparison():
@@ -453,16 +450,17 @@ def test_json_object_as_a_positional_array_fill_element():
     # a json {} element inside the OUTER positional-fill array still
     # needs a schema (the outer [] hasn't changed meaning), but the
     # element itself is schema-free.
-    schema = DictSchemaProvider({"first": 0.0, "second": 0.0})
+    schema = DictSchemaProvider({"first": {"a": 0, "b": 0}, "second": 0.0})
     results, _ = run_all("send [json { a: 1, b: 2 }, 5.0];", schema_provider=schema)
     assert results[0].value == {"first": {"a": 1.0, "b": 2.0}, "second": 5.0}
 
 
 # -- optional schema type-checking (DictSchemaProvider.type_at) --------------
 
+
 def test_schema_type_check_passes_when_types_match():
     schema = DictSchemaProvider({"is_valid": False, "level": 0, "ratio": 0.0, "name": ""})
-    src = "is_valid = true;\nlevel = 5;\nratio = 2.5;\nname = \"x\";\nsend hz 1 dur 1t;"
+    src = 'is_valid = true;\nlevel = 5;\nratio = 2.5;\nname = "x";\nsend hz 1 dur 1t;'
     results, _ = run_all(src, schema_provider=schema)
     assert results[0].value == {"is_valid": True, "level": 5, "ratio": 2.5, "name": "x"}
 
@@ -512,6 +510,7 @@ def test_schema_without_type_at_is_completely_unaffected():
 
 # -- msg starts fully defaulted when a schema is given -----------------------
 
+
 def test_bare_send_with_a_schema_sends_the_fully_defaulted_message():
     # no field assignments at all - the message still starts as the
     # schema's own default tree, not empty. default_at([]) already
@@ -547,6 +546,7 @@ def test_two_runs_sharing_a_schema_provider_do_not_alias_each_others_default_msg
 
 
 # -- msg.field reads back the message currently being built ------------------
+
 
 def test_msg_dot_access_reads_a_previously_assigned_field():
     src = "angular = 5;\ndata = msg.angular + 1;\nsend hz 1 dur 1t;"
@@ -588,6 +588,7 @@ def test_msg_is_reserved_and_cannot_be_a_var_name():
 
 
 # -- bare-name sugar for a top-level msg field --------------------------
+
 
 def test_bare_name_reads_a_top_level_msg_field_when_unambiguous():
     src = "angular = 5;\ndata = angular + 1;\nsend hz 1 dur 1t;"
@@ -634,6 +635,7 @@ def test_bare_name_sugar_reflects_schema_auto_filled_defaults():
 
 
 # -- assigning into a var-held array/object -----------------------------
+
 
 def test_dot_assign_into_a_var_held_object():
     # regression test: config.retries = 5; used to silently write an
@@ -707,6 +709,7 @@ def test_msg_prefixed_field_assignment_still_works():
 
 
 # -- func macros ----------------------------------------------------------
+
 
 def test_macro_ramp_pattern_end_to_end():
     src = """

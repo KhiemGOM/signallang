@@ -13,8 +13,8 @@ import pathlib
 import sys
 
 from .errors import ScriptError
-from .expr import ExprError
-from .vm import DEFAULT_STEP_INSTRUCTION_BUDGET, compile_file
+from .resources import DEFAULT_OPERATION_BUDGET, positive_integer
+from .vm import DEFAULT_STEP_INSTRUCTION_BUDGET, compile_script
 
 
 def _format_error(path: str, source: str, err: Exception) -> str:
@@ -46,15 +46,18 @@ def _parse_externs(pairs: list) -> dict:
         if "=" not in pair:
             raise SystemExit(f"error: --ext expects KEY=VALUE, got {pair!r}")
         key, _, raw_value = pair.partition("=")
+        if not key.isidentifier():
+            raise ScriptError("--ext key must be an identifier")
         externs[key] = _parse_ext_value(raw_value)
     return externs
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
-    source = args.file.read_text(encoding="utf-8")
+    source = ""
     try:
-        compile_file(args.file)
-    except (ScriptError, ExprError) as err:
+        source = args.file.read_text(encoding="utf-8")
+        compile_script(source)
+    except (ScriptError, OSError, UnicodeError) as err:
         print(_format_error(str(args.file), source, err), file=sys.stderr)
         return 1
     print(f"{args.file}: OK")
@@ -62,20 +65,37 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    source = args.file.read_text(encoding="utf-8")
+    source = ""
     try:
-        compiled = compile_file(args.file)
+        positive_integer(args.ticks, "--ticks")
+        source = args.file.read_text(encoding="utf-8")
+        compiled = compile_script(source, max_hz=args.max_hz)
         run = compiled.new_run(
             external_params=_parse_externs(args.ext),
             step_instruction_budget=args.step_instruction_budget,
+            operation_budget=args.operation_budget,
+            seed=_parse_ext_value(args.seed) if args.seed is not None else None,
         )
         for _ in range(args.ticks):
             result = run.step()
             if result is None:
                 break
-            if result.sent:
-                print(json.dumps(result.value))
-    except (ScriptError, ExprError) as err:
+            if args.trace:
+                print(
+                    json.dumps(
+                        {
+                            "timestamp": result.timestamp,
+                            "sequence": result.sequence,
+                            "delay": result.delay,
+                            "sent": result.sent,
+                            "value": result.value,
+                        },
+                        allow_nan=False,
+                    )
+                )
+            elif result.sent:
+                print(json.dumps(result.value, allow_nan=False))
+    except (ScriptError, OSError, UnicodeError) as err:
         print(_format_error(str(args.file), source, err), file=sys.stderr)
         return 1
     return 0
@@ -92,6 +112,10 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="compile a script and print each sent message as a JSON line")
     run.add_argument("file", type=pathlib.Path)
     run.add_argument("--ticks", type=int, default=20, help="max step() calls (default: 20)")
+    run.add_argument("--operation-budget", type=int, default=DEFAULT_OPERATION_BUDGET)
+    run.add_argument("--max-hz", type=float, default=50.0)
+    run.add_argument("--seed", help="per-run random seed (number or string)")
+    run.add_argument("--trace", action="store_true", help="include timing metadata and wait events")
     run.add_argument(
         "--ext",
         action="append",

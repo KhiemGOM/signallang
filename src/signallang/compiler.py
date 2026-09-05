@@ -7,8 +7,9 @@ wouldn't have changed anything at the layer that actually matters).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 
+from . import expr
 from .ast_nodes import (
     ArrayLit,
     Assign,
@@ -33,6 +34,7 @@ from .ast_nodes import (
     Wait,
 )
 from .errors import ScriptError
+from .resources import positive_number
 
 MAX_HZ = 50.0  # mirrors dashboard/graph/fake_publisher.py's MAX_RATE_HZ - this
 # package's own constant, not a shared dependency on that file.
@@ -45,6 +47,18 @@ MAX_HZ = 50.0  # mirrors dashboard/graph/fake_publisher.py's MAX_RATE_HZ - this
 class SetVar:
     name: str
     expr: ExprSpan
+
+
+@dataclass
+class LoopValue:
+    name: str
+    expr: ExprSpan
+    nonnegative: bool = False
+
+
+@dataclass
+class ClearVar:
+    name: str
 
 
 @dataclass
@@ -98,9 +112,10 @@ class LiveIf:
 
 @dataclass
 class SendInstr:
-    hz: float
+    hz: float | ExprSpan
     dur_kind: str  # "wall" | "tick" | "inf"
-    dur_value: float | None
+    dur_value: float | ExprSpan | None
+    max_hz: float = MAX_HZ
 
 
 @dataclass
@@ -111,6 +126,7 @@ class SeedInstr:
 @dataclass
 class WaitInstr:
     hz: float  # 1 / duration, pre-clamped to max_hz like SendInstr.hz
+    duration: ExprSpan | None = None
 
 
 @dataclass
@@ -141,12 +157,28 @@ class ResetTimer:
 class Compiler:
     def __init__(self, max_hz: float = MAX_HZ):
         self.instrs: list = []
-        self.max_hz = max_hz
+        self.max_hz = positive_number(max_hz, "max_hz")
         self._unique = 0
 
     def compile(self, program: Program) -> list:
         self._compile_block(program.body)
+        self._compile_expressions(self.instrs)
+        self._compile_expressions(program.externs)
         return self.instrs
+
+    def _compile_expressions(self, value):
+        if isinstance(value, ExprSpan):
+            try:
+                value.node = expr.compile_expression(value.text)
+            except expr.ExprError as error:
+                pos = (value.pos or 0) + (0 if value.generated else error.pos or 0)
+                raise expr.ExprError(error.message, pos) from None
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                self._compile_expressions(child)
+        elif is_dataclass(value):
+            for item in fields(value):
+                self._compile_expressions(getattr(value, item.name))
 
     def _emit(self, instr) -> int:
         self.instrs.append(instr)
@@ -239,22 +271,31 @@ class Compiler:
             self._compile_block(s.body)
             self._emit(Jump(start))
         else:
-            self._compile_for_core(self._next_name("count"), ExprSpan("0"), s.count, s.body)
+            self._compile_for_core(self._next_name("count"), ExprSpan("0"), s.count, s.body, repeat=True)
 
-    def _compile_for_core(self, var: str, start_expr: ExprSpan, end_expr: ExprSpan | None, body: list) -> None:
-        self._emit(SetVar(var, start_expr))
+    def _compile_for_core(
+        self, var: str, start_expr: ExprSpan, end_expr: ExprSpan | None, body: list, repeat=False
+    ) -> None:
+        self._emit(LoopValue(var, start_expr))
+        bound = None
+        if end_expr is not None:
+            bound = self._next_name("bound")
+            self._emit(LoopValue(bound, end_expr, nonnegative=repeat))
         loop_start = len(self.instrs)
         jf_idx = None
         if end_expr is None:
             # `..inf` - unconditional back-edge, no guard needed.
             self._check_no_mid_body_infinite_send(body, context="an infinite `for` loop")
         else:
-            jf_idx = self._emit(JumpIfFalse(ExprSpan(f"({var}) < ({end_expr.text})"), -1))
+            jf_idx = self._emit(JumpIfFalse(ExprSpan(f"({var}) < ({bound})"), -1))
         self._compile_block(body)
         self._emit(SetVar(var, ExprSpan(f"({var}) + 1")))
         self._emit(Jump(loop_start))
         if jf_idx is not None:
+            assert bound is not None
             self.instrs[jf_idx] = JumpIfFalse(self.instrs[jf_idx].cond, len(self.instrs))
+            self._emit(ClearVar(var))
+            self._emit(ClearVar(bound))
 
     def _check_no_mid_body_infinite_send(self, body: list, context: str) -> None:
         """`send dur inf;` as a non-last top-level statement of an
@@ -274,23 +315,29 @@ class Compiler:
     def _compile_send(self, s: Send) -> None:
         if s.value is not None:
             self._emit(SetField([], self._compile_value(s.value)))
-        if s.hz is not None and s.hz <= 0:
+        if s.hz is not None and not isinstance(s.hz, ExprSpan):
             # left uncaught, this becomes a raw ZeroDivisionError (or a
             # negative sleep) deep inside the VM/driver - a genuine
             # authoring mistake, not an internal error, so it needs to be
             # a clear ScriptError here instead.
-            raise ScriptError(f"hz must be greater than 0, got {s.hz}")
-        hz = self.max_hz if s.hz is None else min(s.hz, self.max_hz)
-        self._emit(SendInstr(hz=hz, dur_kind=s.dur_kind, dur_value=s.dur_value))
+            positive_number(s.hz, "hz")
+        if s.dur_value is not None and not isinstance(s.dur_value, ExprSpan):
+            positive_number(s.dur_value, "send duration")
+            if s.dur_kind == "tick" and int(s.dur_value) != s.dur_value:
+                raise ScriptError("tick count must be a positive whole number")
+        hz = s.hz if isinstance(s.hz, ExprSpan) else self.max_hz if s.hz is None else min(s.hz, self.max_hz)
+        self._emit(SendInstr(hz=hz, dur_kind=s.dur_kind, dur_value=s.dur_value, max_hz=self.max_hz))
 
     def _compile_wait(self, s: Wait) -> None:
         # unlike SendInstr.hz, never clamped to max_hz - that ceiling
         # exists to cap how often a message actually publishes, and
         # wait never publishes, so clamping here would just silently
         # stretch a short requested gap into a longer one for no reason.
-        if s.duration <= 0:
-            raise ScriptError(f"wait duration must be greater than 0, got {s.duration}")
-        self._emit(WaitInstr(hz=1.0 / s.duration))
+        if isinstance(s.duration, ExprSpan):
+            self._emit(WaitInstr(hz=1.0, duration=s.duration))
+        else:
+            duration = positive_number(s.duration, "wait duration")
+            self._emit(WaitInstr(hz=1.0 / duration))
 
 
 def compile_program(program: Program, max_hz: float = MAX_HZ) -> list:

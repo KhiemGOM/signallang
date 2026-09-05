@@ -50,14 +50,12 @@ def test_two_externs_together_matches_the_ros_topic_ros_schema_use_case():
 
 
 def test_externs_readable_by_host_independent_of_the_script():
-    run = compile_script("extern ros_topic;\nsend hz 1 dur 1t;").new_run(
-        external_params={"ros_topic": "/cmd_vel"}
-    )
+    run = compile_script("extern ros_topic;\nsend hz 1 dur 1t;").new_run(external_params={"ros_topic": "/cmd_vel"})
     assert run.externs["ros_topic"] == "/cmd_vel"
 
 
 def test_externs_dict_is_separate_from_vars_not_merged_in():
-    run = compile_script('var x = 5;\nextern ros_topic;\nsend hz 1 dur 1t;').new_run(
+    run = compile_script("var x = 5;\nextern ros_topic;\nsend hz 1 dur 1t;").new_run(
         external_params={"ros_topic": "/cmd_vel"}
     )
     assert "ros_topic" not in run.vars

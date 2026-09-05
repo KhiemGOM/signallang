@@ -8,16 +8,16 @@ driver, or a host application's own timer/event-loop callback).
 
 from __future__ import annotations
 
-import copy
 import pathlib
 import random
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from . import expr
 from .ast_nodes import ArrayLit, Default, ExprSpan
 from .compiler import (
     MAX_HZ,
+    ClearVar,
     CreateTimer,
     Jump,
     JumpIfFalse,
@@ -25,6 +25,7 @@ from .compiler import (
     LiveIf,
     LiveSetVar,
     LiveStaticSetVar,
+    LoopValue,
     ResetTimer,
     SeedInstr,
     SendInstr,
@@ -36,6 +37,7 @@ from .compiler import (
 )
 from .errors import ScriptError
 from .parser import parse
+from .resources import DEFAULT_OPERATION_BUDGET, Budget, clone_value, positive_integer, positive_number
 
 # step() runs a plain Python `while True:` across instructions that don't
 # themselves yield (everything except SendInstr/WaitInstr - see
@@ -59,6 +61,65 @@ class StepResult:
     value: dict | None  # None iff sent is False (a wait tick - nothing to publish)
     hz: float
     sent: bool = True
+    timestamp: float = 0.0
+    sequence: int = 0
+
+    @property
+    def delay(self) -> float:
+        """Simulated seconds until the caller should take the next step."""
+        return 1.0 / self.hz
+
+
+class _Scope(Mapping):
+    """Resolve only identifiers actually read by the expression evaluator."""
+
+    def __init__(self, run, live_timer_name=None, extra=None):
+        self.run = run
+        self.live_timer_name = live_timer_name
+        self.extra = extra or {}
+        self.snapshot = None
+
+    def __iter__(self):
+        names = set(self.run.vars) | set(self.run.externs) | set(self.run.msg) | set(self.extra)
+        names.update(name for name in self.run.timers if not name.startswith("__live_"))
+        names.update(("t", "msg"))
+        if self.live_timer_name is not None:
+            names.add("_t")
+        return iter(names)
+
+    def __len__(self):
+        return sum(1 for _ in self)
+
+    def __contains__(self, name):
+        return (
+            name in self.extra
+            or name in self.run.vars
+            or name in self.run.externs
+            or name in ("t", "msg")
+            or (name == "_t" and self.live_timer_name is not None)
+            or (name in self.run.timers and not name.startswith("__live_"))
+            or (name in self.run.msg and name not in expr.RESERVED_NAMES)
+        )
+
+    def __getitem__(self, name):
+        run = self.run
+        if name in self.extra:
+            return self.extra[name]
+        if name == "t":
+            return run.master_t
+        if name == "_t" and self.live_timer_name is not None:
+            return run._timer_value(run.timers[self.live_timer_name])
+        if name in run.externs:
+            return clone_value(run.externs[name], run._budget)
+        if name in run.timers and not name.startswith("__live_"):
+            return run._timer_value(run.timers[name])
+        if name in run.vars:
+            return run.vars[name]
+        if name == "msg" or (name in run.msg and name not in expr.RESERVED_NAMES):
+            if self.snapshot is None:
+                self.snapshot = clone_value(run.msg, run._budget)
+            return self.snapshot if name == "msg" else self.snapshot[name]
+        raise KeyError(name)
 
 
 class ScriptRun:
@@ -70,11 +131,21 @@ class ScriptRun:
         externs: Sequence = (),
         external_params: dict | None = None,
         step_instruction_budget: int = DEFAULT_STEP_INSTRUCTION_BUDGET,
+        operation_budget: int = DEFAULT_OPERATION_BUDGET,
+        seed: float | str | None = None,
     ):
         self.instructions = instructions
         self.schema_provider = schema_provider
         self.duration_vars = duration_vars
-        self.step_instruction_budget = step_instruction_budget
+        self.step_instruction_budget = positive_integer(step_instruction_budget, "step_instruction_budget")
+        self.operation_budget = positive_integer(operation_budget, "operation_budget")
+        self._budget = Budget(self.operation_budget)
+        if seed is not None:
+            if type(seed) not in (int, float, str):
+                raise ScriptError("seed must be a number or string")
+            clone_value(seed)
+        self.rng = random.Random(seed)
+        self.sequence = 0
 
         self.ip = 0
         self.halted = False
@@ -96,12 +167,16 @@ class ScriptRun:
         # no assignments at all still sends a complete, schema-shaped
         # message. Without a schema there is nothing to default from, so
         # the message starts empty exactly as before.
-        self.msg: dict = copy.deepcopy(schema_provider.default_at([])) if schema_provider is not None else {}
+        self.msg: dict = (
+            clone_value(schema_provider.default_at([]), self._budget) if schema_provider is not None else {}
+        )
         self.live_bindings: dict = {}  # path tuple -> LiveBinding
 
         self._send_ip: int | None = None
         self._send_ticks_done = 0
         self._send_start_t = 0.0
+        self._send_hz = MAX_HZ
+        self._send_duration: float | None = None
 
         # Resolved once, upfront, before any instruction runs - see
         # ExternDecl (ast_nodes.py) for why this is its own dict rather
@@ -117,9 +192,9 @@ class ScriptRun:
         params = external_params or {}
         for decl in externs:
             if decl.name in params:
-                self.externs[decl.name] = params[decl.name]
+                self.externs[decl.name] = clone_value(params[decl.name], self._budget)
             elif decl.default is not None:
-                self.externs[decl.name] = self._eval(decl.default)
+                self.externs[decl.name] = clone_value(self._eval(decl.default), self._budget)
             else:
                 raise ScriptError(
                     f"extern '{decl.name}' has no default and wasn't supplied - "
@@ -130,6 +205,36 @@ class ScriptRun:
     # -- stepping -----------------------------------------------------------
 
     def step(self) -> StepResult | None:
+        self._budget = Budget(self.operation_budget)
+        try:
+            return self._step()
+        except (ScriptError, ValueError, TypeError, ArithmeticError, KeyError, RecursionError) as error:
+            self.halted = True
+            if isinstance(error, ScriptError):
+                raise
+            raise ScriptError(str(error)) from None
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        result = self.step()
+        if result is None:
+            raise StopIteration
+        return result
+
+    def collect(self, ticks: int) -> list[StepResult]:
+        """Consume at most ticks steps, including wait events."""
+        positive_integer(ticks, "ticks")
+        result = []
+        for _ in range(ticks):
+            item = self.step()
+            if item is None:
+                break
+            result.append(item)
+        return result
+
+    def _step(self) -> StepResult | None:
         if self.halted:
             return None
         executed = 0
@@ -153,14 +258,23 @@ class ScriptRun:
             self._exec_instant(instr)
 
     def _exec_instant(self, instr) -> None:
-        if isinstance(instr, SeedInstr):
+        if isinstance(instr, LoopValue):
+            value = self._eval(instr.expr)
+            if not expr.is_number(value) or int(value) != value or (instr.nonnegative and value < 0):
+                raise ScriptError("loop bounds must be whole numbers; repeat count must be nonnegative", instr.expr.pos)
+            self.vars[instr.name] = int(value)
+            self.ip += 1
+        elif isinstance(instr, ClearVar):
+            self.vars.pop(instr.name, None)
+            self.ip += 1
+        elif isinstance(instr, SeedInstr):
             value = self._eval(instr.value)
             if isinstance(value, bool) or not isinstance(value, (int, float, str)):
                 raise ScriptError("seed() needs a number or string")
-            random.seed(value)
+            self.rng.seed(value)
             self.ip += 1
         elif isinstance(instr, SetVar):
-            self.vars[instr.name] = self._eval(instr.expr)
+            self.vars[instr.name] = clone_value(self._eval(instr.expr), self._budget)
             self.ip += 1
         elif isinstance(instr, SetVarIndex):
             self._apply_var_index(instr.name, instr.accessors, instr.expr)
@@ -188,10 +302,19 @@ class ScriptRun:
             self._send_ip = self.ip
             self._send_ticks_done = 0
             self._send_start_t = self.master_t
+            hz = self._eval(instr.hz) if isinstance(instr.hz, ExprSpan) else instr.hz
+            self._send_hz = min(positive_number(hz, "hz"), instr.max_hz)
+            duration = self._eval(instr.dur_value) if isinstance(instr.dur_value, ExprSpan) else instr.dur_value
+            if duration is not None:
+                duration = positive_number(duration, "send duration")
+                if instr.dur_kind == "tick" and int(duration) != duration:
+                    raise ScriptError("tick count must be a positive whole number")
+            self._send_duration = duration
 
         value = self._current_msg()
-        period = 1.0 / instr.hz
-        self.master_t += period
+        timestamp = self.master_t
+        period = 1.0 / self._send_hz
+        self._advance_time(period)
         self._send_ticks_done += 1
 
         done = self._send_is_done(instr)
@@ -199,27 +322,39 @@ class ScriptRun:
             self.ip += 1
             self._send_ip = None
 
-        return StepResult(value=value, hz=instr.hz)
+        result = StepResult(value=value, hz=self._send_hz, timestamp=timestamp, sequence=self.sequence)
+        self.sequence += 1
+        return result
 
     def _send_is_done(self, instr: SendInstr) -> bool:
         if instr.dur_kind == "inf":
             return False
         if instr.dur_kind == "tick":
-            assert instr.dur_value is not None  # guaranteed by the compiler for dur_kind="tick"
-            return self._send_ticks_done >= instr.dur_value
+            assert self._send_duration is not None  # guaranteed by the compiler for dur_kind="tick"
+            return self._send_ticks_done >= self._send_duration
         if instr.dur_kind == "wall":
-            assert instr.dur_value is not None  # guaranteed by the compiler for dur_kind="wall"
-            return (self.master_t - self._send_start_t) >= instr.dur_value - 1e-9
+            assert self._send_duration is not None  # guaranteed by the compiler for dur_kind="wall"
+            return (self._send_ticks_done / self._send_hz) >= self._send_duration - min(
+                1e-9, self._send_duration * 1e-12
+            )
         raise ScriptError(f"internal: unknown dur_kind {instr.dur_kind!r}")
 
+    def _advance_time(self, delay):
+        import math
+
+        next_time = self.master_t + delay
+        if not math.isfinite(next_time) or next_time <= self.master_t:
+            raise ScriptError("schedule exceeds simulated clock precision or range")
+        self.master_t = next_time
+
     def _do_wait_tick(self, instr: WaitInstr) -> StepResult:
-        # always exactly one tick, unlike SendInstr - a `wait` is a
-        # single gap, not a multi-tick span, so the IP always advances
-        # immediately rather than tracking done-ness across repeated
-        # step() calls the way a multi-tick Send does.
-        self.master_t += 1.0 / instr.hz
+        hz = instr.hz if instr.duration is None else 1.0 / positive_number(self._eval(instr.duration), "wait duration")
+        timestamp = self.master_t
+        self._advance_time(1.0 / hz)
         self.ip += 1
-        return StepResult(value=None, hz=instr.hz, sent=False)
+        result = StepResult(value=None, hz=hz, sent=False, timestamp=timestamp, sequence=self.sequence)
+        self.sequence += 1
+        return result
 
     # -- expression evaluation -----------------------------------------------
 
@@ -228,53 +363,18 @@ class ScriptRun:
             ts.offset = self.master_t
         return self.master_t - ts.offset
 
-    def _flat_scope(self, live_timer_name: str | None = None) -> dict:
-        scope = dict(self.vars)
-        # Merged in for read access from any expression (bare `ros_topic`
-        # works exactly like a var, syntactically) even though the
-        # storage is kept separate on self.externs - see ExternDecl.
-        # Name collisions with a var are rejected at parse time, so
-        # which side wins here never actually matters.
-        scope.update(self.externs)
-        scope["t"] = self.master_t
-        # A read-only, deep-copied snapshot of the message as statically
-        # written so far (via `field = ...;`, not `field = live {...};`),
-        # accessed like any other object value: msg.header.frame_id,
-        # msg["angular"]. Deep-copied so a `var` that captures part of it
-        # (`var h = msg.header;`) can't later be silently mutated by an
-        # unrelated field write reusing the same nested dict in place
-        # (see _set_path). Deliberately excludes any field still driven
-        # by an unresolved live binding: building that would require
-        # resolving live bindings here too, and a live field whose own
-        # expression reads msg would then need to resolve itself to
-        # build the very value it's asking for - direct recursion. `msg`
-        # is reserved (in _KEYWORDS), so it can never collide with a var.
-        scope["msg"] = copy.deepcopy(self.msg)
-        for name, ts in self.timers.items():
-            if name.startswith("__live_"):
-                continue
-            scope[name] = self._timer_value(ts)
-        if live_timer_name is not None:
-            scope["_t"] = self._timer_value(self.timers[live_timer_name])
-        # Bare-name sugar for a top-level message field: `angular` reads
-        # `msg.angular`, but only when nothing else already claims that
-        # name - a var, t/_t, a timer, or a language constant all win
-        # outright, silently, with no error (that's the whole point: the
-        # sugar only ever fills a genuine gap). Once shadowed, the
-        # explicit `msg.angular` form still always works. Only top-level
-        # fields get this - a nested field never does, since two
-        # different paths sharing a leaf name (linear.x, angular.x)
-        # would make a bare `x` genuinely ambiguous, not just shadowed.
-        for name, value in scope["msg"].items():
-            if name not in scope and name not in expr.RESERVED_NAMES:
-                scope[name] = value
-        return scope
+    def _flat_scope(self, live_timer_name=None, extra=None):
+        return _Scope(self, live_timer_name, extra)
 
     def _eval(self, span: ExprSpan, live_timer_name: str | None = None, extra: dict | None = None) -> expr.Value:
-        scope = self._flat_scope(live_timer_name)
-        if extra:
-            scope.update(extra)
-        return expr.evaluate(span.text, scope, self.duration_vars)
+        if span.node is None:
+            span.node = expr.compile_expression(span.text)
+        try:
+            return expr.evaluate_node(
+                span.node, self._flat_scope(live_timer_name, extra), rng=self.rng, budget=self._budget
+            )
+        except expr.ExprError as error:
+            raise expr.ExprError(error.message, (span.pos or 0) + (0 if span.generated else error.pos or 0)) from None
 
     # -- var-held array/object mutation --------------------------------
 
@@ -288,7 +388,7 @@ class ScriptRun:
         mirroring how a message-field path already auto-creates
         intermediate dicts; an array index is always bounds-checked
         strictly, never auto-extended."""
-        value = self._eval(value_expr)
+        value = clone_value(self._eval(value_expr), self._budget)
         container = self.vars[name]
         for kind, key in accessors[:-1]:
             if kind == "dot":
@@ -349,11 +449,19 @@ class ScriptRun:
 
     def _apply_field(self, path: list, value) -> None:
         key = tuple(path)
+        # The most recent write owns overlapping paths in either direction.
+        for old in list(self.live_bindings):
+            if old[: len(key)] == key or key[: len(old)] == old:
+                binding = self.live_bindings.pop(old)
+                self.statics.pop(binding.timer_name, None)
         if isinstance(value, LiveBinding):
             self.live_bindings[key] = value
             # Each static's init evaluates once, right now - the same
             # instant this binding's own _t (re)latches - never per tick.
-            self.statics[value.timer_name] = {name: self._eval(init) for name, init in value.static_inits}
+            statics: dict = {}
+            for name, init in value.static_inits:
+                statics[name] = clone_value(self._eval(init, value.timer_name, statics), self._budget)
+            self.statics[value.timer_name] = statics
             return
         self.live_bindings.pop(key, None)
         if isinstance(value, ExprSpan):
@@ -368,7 +476,9 @@ class ScriptRun:
             # way json {} already needs no schema for its own (self-
             # naming) fields. Whether a schema exists at all is the
             # integration layer's concern, not the script's.
-            if self.schema_provider is not None:
+            type_at = getattr(self.schema_provider, "type_at", None)
+            array_field = type_at is not None and type_at(path) == "array"
+            if self.schema_provider is not None and not array_field:
                 field_names = self.schema_provider.fields_at(path)
                 if len(field_names) != len(value.elements):
                     raise ScriptError(
@@ -408,8 +518,11 @@ class ScriptRun:
             raise ScriptError(f"{what} at '{'.'.join(path) or '<msg>'}' needs a schema_provider")
 
     def _set_path(self, path: list, value) -> None:
+        value = clone_value(value, self._budget)
         if not path:
-            self.msg = value if isinstance(value, dict) else {"data": value}
+            message = value if isinstance(value, dict) else {"data": value}
+            self._check_schema_type(path, message)
+            self.msg = message
             return
         self._check_schema_type(path, value)
         cur = self.msg
@@ -422,17 +535,18 @@ class ScriptRun:
         cur[path[-1]] = value
 
     def _check_schema_type(self, path: list, value) -> None:
-        """Optional: only runs if schema_provider defines type_at() at
-        all (checked via getattr rather than calling it unconditionally
-        - an existing SchemaProvider that predates this method, a real
-        ROS-backed one for instance, should keep working completely
-        unchanged, never suddenly start failing scripts it always
-        accepted). A whole sub-message being written at once (value is
-        a dict - `msg = json {...};` or similar) is skipped: there's no
-        single field-type to check it against, and every leaf inside it
-        gets its own check when whatever wrote it did so field by
-        field."""
-        if self.schema_provider is None or isinstance(value, dict):
+        """Apply an optional full validator and the adapter's leaf type checks."""
+        if self.schema_provider is None:
+            return
+        validate = getattr(self.schema_provider, "validate_at", None)
+        if validate is not None:
+            validate(path, value)
+        if isinstance(value, dict):
+            # Even permissive schemas must reject an object replacing a typed leaf.
+            type_at = getattr(self.schema_provider, "type_at", None)
+            expected = type_at(path) if type_at is not None else None
+            if expected is not None and expected != "object":
+                raise ScriptError(f"'{'.'.join(path)}' expects {expected}, got object")
             return
         type_at = getattr(self.schema_provider, "type_at", None)
         if type_at is None:
@@ -445,9 +559,10 @@ class ScriptRun:
             raise ScriptError(f"'{'.'.join(path)}' expects {expected}, got {actual}")
 
     def _current_msg(self) -> dict:
-        result = copy.deepcopy(self.msg)
+        result = clone_value(self.msg, self._budget)
         for path, binding in self.live_bindings.items():
-            value = self._eval_live_block(binding)
+            value = clone_value(self._eval_live_block(binding), self._budget)
+            self._check_schema_type(list(path), value if path or isinstance(value, dict) else {"data": value})
             if not path:
                 result = value if isinstance(value, dict) else {"data": value}
                 continue
@@ -459,7 +574,8 @@ class ScriptRun:
                     cur[seg] = nxt
                 cur = nxt
             cur[path[-1]] = value
-        return result
+        self._check_schema_type([], result)
+        return clone_value(result, self._budget)
 
     def _eval_live_block(self, binding: LiveBinding) -> expr.Value:
         local_vars: dict = {}
@@ -470,9 +586,9 @@ class ScriptRun:
 
         def exec_stmt(s) -> None:
             if isinstance(s, LiveSetVar):
-                local_vars[s.name] = eval_span(s.expr)
+                local_vars[s.name] = clone_value(eval_span(s.expr), self._budget)
             elif isinstance(s, LiveStaticSetVar):
-                statics[s.name] = eval_span(s.expr)
+                statics[s.name] = clone_value(eval_span(s.expr), self._budget)
             elif isinstance(s, LiveIf):
                 branch = s.then_body if expr.is_truthy(eval_span(s.cond)) else s.else_body
                 for x in branch:
@@ -502,6 +618,8 @@ class CompiledScript:
         self,
         external_params: dict | None = None,
         step_instruction_budget: int = DEFAULT_STEP_INSTRUCTION_BUDGET,
+        operation_budget: int = DEFAULT_OPERATION_BUDGET,
+        seed: float | str | None = None,
     ) -> ScriptRun:
         return ScriptRun(
             self.instructions,
@@ -510,11 +628,16 @@ class CompiledScript:
             externs=self.externs,
             external_params=external_params,
             step_instruction_budget=step_instruction_budget,
+            operation_budget=operation_budget,
+            seed=seed,
         )
 
 
 def compile_script(source: str, schema_provider=None, max_hz: float = MAX_HZ) -> CompiledScript:
-    program = parse(source)
+    try:
+        program = parse(source)
+    except RecursionError:
+        raise ScriptError("script exceeds maximum parser nesting depth") from None
     instructions = compile_program(program, max_hz=max_hz)
     return CompiledScript(
         instructions,

@@ -1,6 +1,6 @@
 import pytest
 
-from signallang.compiler import Jump, JumpIfFalse, SendInstr, SetVar, compile_program
+from signallang.compiler import SendInstr, compile_program
 from signallang.errors import ScriptError
 from signallang.parser import parse
 
@@ -37,7 +37,7 @@ def test_linear_desugars_to_live_block_with_created_timer():
 def test_live_block_static_is_pulled_out_of_body_into_static_inits():
     src = "data = live {\n static value = 0;\n value = value + 1;\n return value;\n};\nsend;"
     instrs = compile_program(parse(src))
-    set_field = [i for i in instrs if type(i).__name__ == "SetField"][0]
+    set_field = next(i for i in instrs if type(i).__name__ == "SetField")
     binding = set_field.value
     assert [n for n, _ in binding.static_inits] == ["value"]
     assert binding.static_inits[0][1].text == "0"
@@ -94,17 +94,7 @@ def test_dur_inf_as_last_statement_of_infinite_repeat_is_fine():
 def test_dur_inf_inside_conditional_branch_of_infinite_loop_is_allowed():
     # only ONE branch is unreachable-after, not the whole loop - must not
     # be flagged by the same check that catches the unconditional case.
-    compile_program(
-        parse(
-            "repeat {\n"
-            " if t > 100 {\n"
-            "  send dur inf;\n"
-            " }\n"
-            " data = 1;\n"
-            " send dur 1s;\n"
-            "}"
-        )
-    )
+    compile_program(parse("repeat {\n if t > 100 {\n  send dur inf;\n }\n data = 1;\n send dur 1s;\n}"))
 
 
 def test_hz_inf_clamps_to_max_hz():

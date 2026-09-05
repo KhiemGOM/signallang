@@ -16,12 +16,13 @@ Run it, then from a browser console:
     > const ws = new WebSocket("ws://localhost:8765");
     > ws.onmessage = (e) => console.log(e.data);
 """
+
 import asyncio
 import json
 
 import websockets
 
-from signallang import compile_script
+from signallang import compile_script, run_async
 
 SCRIPT = """
 repeat {
@@ -44,12 +45,19 @@ async def handler(websocket):
 
 
 async def drive_signal():
-    run = compile_script(SCRIPT).new_run()
-    while (result := run.step()) is not None:
-        if clients:
-            payload = json.dumps(result.value)
-            await asyncio.gather(*(ws.send(payload) for ws in clients))
-        await asyncio.sleep(1.0 / result.hz)
+    await run_async(compile_script(SCRIPT), broadcast)
+
+
+async def broadcast(value):
+    targets = tuple(clients)
+    payload = json.dumps(value, allow_nan=False)
+    results = await asyncio.gather(
+        *(asyncio.wait_for(ws.send(payload), timeout=1.0) for ws in targets),
+        return_exceptions=True,
+    )
+    for ws, result in zip(targets, results):
+        if isinstance(result, BaseException):
+            clients.discard(ws)
 
 
 async def main():

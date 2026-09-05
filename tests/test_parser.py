@@ -40,7 +40,7 @@ def test_var_decl_and_reassign():
 def test_var_index_assign_ast_shape():
     from signallang.ast_nodes import VarIndexAssign
 
-    prog = parse('var config = json { a: 1 };\nconfig.a[0] = 5;')
+    prog = parse("var config = json { a: 1 };\nconfig.a[0] = 5;")
     node = prog.body[1]
     assert isinstance(node, VarIndexAssign)
     assert node.name == "config"
@@ -374,6 +374,7 @@ def test_field_name_can_shadow_a_function_name():
 
 # -- shadowing is always rejected -------------------------------------------
 
+
 @pytest.mark.parametrize(
     "src",
     [
@@ -418,7 +419,9 @@ def test_var_and_for_loop_names_cannot_shadow_a_builtin_or_constant(src):
 def test_sequential_non_overlapping_for_loops_can_reuse_a_name():
     # shadowing is about overlapping scope, not the name itself - two
     # sibling for loops that never nest are fine reusing "i".
-    prog = parse("for i in 0..2 {\n data = i;\n send hz 1 dur 1t;\n}\nfor i in 0..2 {\n data = i;\n send hz 1 dur 1t;\n}")
+    prog = parse(
+        "for i in 0..2 {\n data = i;\n send hz 1 dur 1t;\n}\nfor i in 0..2 {\n data = i;\n send hz 1 dur 1t;\n}"
+    )
     assert len(prog.body) == 2
 
 
@@ -547,6 +550,7 @@ def test_both_if_branches_parsed_eagerly_even_if_one_never_runs():
 
 
 # -- func macros --------------------------------------------------------
+
 
 def test_func_decl_produces_no_statements_of_its_own():
     from signallang.ast_nodes import Block

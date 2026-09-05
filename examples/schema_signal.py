@@ -14,6 +14,7 @@ Run it:
     pip install signallang
     python3 examples/schema_signal.py
 """
+
 import json
 
 from signallang import DictSchemaProvider, compile_script, run_realtime
