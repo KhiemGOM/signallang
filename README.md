@@ -2,6 +2,9 @@
 
 # signallang
 
+[![PyPI](https://img.shields.io/pypi/v/signallang)](https://pypi.org/project/signallang/)
+[![tests](https://github.com/KhiemGOM/signallang/actions/workflows/test.yml/badge.svg)](https://github.com/KhiemGOM/signallang/actions/workflows/test.yml)
+
 A small, framework-independent language for publishing synthetic signals:
 structured messages whose values change on a schedule. Use it to mock sensor
 feeds, drive UI demos, exercise message consumers, and feed simulators.
